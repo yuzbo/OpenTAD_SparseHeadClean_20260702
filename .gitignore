@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime outputs
+logs/
+exps/
+work_dirs/
+outputs/
+results/
+tmp/
+*.log
+*.out
+
+# Data and model artifacts
+data/
+datasets/
+thumos14/
+pretrained/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Archives and sync bundles
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+.codex_sync_irregular/
+codex_sync_irregular.zip
+
+# Historical research material intentionally excluded from this clean repo
+research-wiki/
+figures/
+docs/
+wiki/

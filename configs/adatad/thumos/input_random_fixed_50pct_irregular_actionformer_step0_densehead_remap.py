@@ -1,0 +1,75 @@
+_base_ = ["./input_random_fixed_50pct_irregular_actionformer_step0_densehead.py"]
+
+dataset = dict(
+    train=dict(
+        pipeline=[
+            dict(type="PrepareVideoInfo", format="mp4"),
+            dict(type="mmaction.DecordInit", num_threads=4),
+            dict(
+                type="LoadFrames",
+                num_clips=1,
+                method="random_fixed_subsample",
+                method_base="random_trunc",
+                keep_ratio=0.5,
+                remap_gt_to_selected_axis=True,
+                target_len=384,
+                source_len=768,
+                trunc_thresh=0.75,
+                crop_ratio=[0.9, 1.0],
+                scale_factor=1,
+            ),
+            dict(type="mmaction.DecordDecode"),
+            dict(type="mmaction.Resize", scale=(-1, 160)),
+            dict(type="mmaction.CenterCrop", crop_size=160),
+            dict(type="mmaction.FormatShape", input_format="NCTHW"),
+            dict(type="ConvertToTensor", keys=["imgs", "gt_segments", "gt_labels"]),
+            dict(type="Collect", inputs="imgs", keys=["masks", "gt_segments", "gt_labels"]),
+        ],
+    ),
+    val=dict(
+        pipeline=[
+            dict(type="PrepareVideoInfo", format="mp4"),
+            dict(type="mmaction.DecordInit", num_threads=4),
+            dict(
+                type="LoadFrames",
+                num_clips=1,
+                method="random_fixed_subsample",
+                method_base="sliding_window",
+                keep_ratio=0.5,
+                remap_gt_to_selected_axis=True,
+                target_len=384,
+                scale_factor=1,
+            ),
+            dict(type="mmaction.DecordDecode"),
+            dict(type="mmaction.Resize", scale=(-1, 160)),
+            dict(type="mmaction.CenterCrop", crop_size=160),
+            dict(type="mmaction.FormatShape", input_format="NCTHW"),
+            dict(type="ConvertToTensor", keys=["imgs", "gt_segments", "gt_labels"]),
+            dict(type="Collect", inputs="imgs", keys=["masks", "gt_segments", "gt_labels"]),
+        ],
+    ),
+    test=dict(
+        pipeline=[
+            dict(type="PrepareVideoInfo", format="mp4"),
+            dict(type="mmaction.DecordInit", num_threads=4),
+            dict(
+                type="LoadFrames",
+                num_clips=1,
+                method="random_fixed_subsample",
+                method_base="sliding_window",
+                keep_ratio=0.5,
+                remap_gt_to_selected_axis=True,
+                target_len=384,
+                scale_factor=1,
+            ),
+            dict(type="mmaction.DecordDecode"),
+            dict(type="mmaction.Resize", scale=(-1, 160)),
+            dict(type="mmaction.CenterCrop", crop_size=160),
+            dict(type="mmaction.FormatShape", input_format="NCTHW"),
+            dict(type="ConvertToTensor", keys=["imgs"]),
+            dict(type="Collect", inputs="imgs", keys=["masks"]),
+        ],
+    ),
+)
+
+work_dir = "exps/thumos/adatad/input_random_fixed_50pct_irregular_actionformer_step0_densehead_remap"
