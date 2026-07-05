@@ -18,7 +18,7 @@ tmp/
 
 # Data and model artifacts
 data/
-datasets/
+/datasets/
 thumos14/
 pretrained/
 checkpoints/

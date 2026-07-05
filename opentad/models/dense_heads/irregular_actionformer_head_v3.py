@@ -40,9 +40,10 @@ class IrregularActionFormerHeadV3(IrregularActionFormerHeadV2):
         soft_center_cost_weight=1.0,
         soft_scale_cost_weight=0.5,
         reg_denom_floor=0.5,
+        use_regress_range=False,
         geometry_hidden_channels=128,
         geometry_scale=0.25,
-        boundary_loss_weight=0.2,
+        boundary_loss_weight=0.0,
         boundary_sigma=1.0,
         boundary_num_convs=1,
         boundary_predictor_kernel_size=1,
@@ -77,6 +78,7 @@ class IrregularActionFormerHeadV3(IrregularActionFormerHeadV2):
             soft_center_cost_weight=soft_center_cost_weight,
             soft_scale_cost_weight=soft_scale_cost_weight,
             reg_denom_floor=reg_denom_floor,
+            use_regress_range=use_regress_range,
             debug_cfg=debug_cfg,
         )
         if self.use_boundary_aux:

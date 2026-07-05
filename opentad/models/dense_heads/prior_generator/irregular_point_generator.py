@@ -33,6 +33,9 @@ class IrregularPointGenerator:
             if self.range_mode == "hard":
                 reg_min = reg_range[0] * point_scale
                 reg_max = reg_range[1] * point_scale
+            elif self.range_mode == "absolute":
+                reg_min = torch.full_like(center, reg_range[0])
+                reg_max = torch.full_like(center, reg_range[1])
             elif self.range_mode == "overlap_band":
                 center_scale = 0.5 * (reg_range[0] + reg_range[1]) * point_scale
                 half_width = 0.5 * (reg_range[1] - reg_range[0]) * point_scale
@@ -64,6 +67,9 @@ class IrregularPointGeneratorV2(IrregularPointGenerator):
             if self.range_mode == "hard":
                 reg_min = reg_range[0] * point_scale
                 reg_max = reg_range[1] * point_scale
+            elif self.range_mode == "absolute":
+                reg_min = torch.full_like(center, reg_range[0])
+                reg_max = torch.full_like(center, reg_range[1])
             elif self.range_mode == "overlap_band":
                 center_scale = 0.5 * (reg_range[0] + reg_range[1]) * point_scale
                 half_width = 0.5 * (reg_range[1] - reg_range[0]) * point_scale

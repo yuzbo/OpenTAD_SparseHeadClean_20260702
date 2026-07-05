@@ -30,6 +30,7 @@ class IrregularActionFormerHeadV2(nn.Module):
         soft_center_cost_weight=1.0,
         soft_scale_cost_weight=0.5,
         reg_denom_floor=0.5,
+        use_regress_range=False,
         debug_cfg=None,
     ):
         super().__init__()
@@ -48,6 +49,7 @@ class IrregularActionFormerHeadV2(nn.Module):
         self.soft_center_cost_weight = soft_center_cost_weight
         self.soft_scale_cost_weight = soft_scale_cost_weight
         self.reg_denom_floor = reg_denom_floor
+        self.use_regress_range = use_regress_range
         self.loss_normalizer_momentum = loss_normalizer_momentum
         self.register_buffer("loss_normalizer", torch.tensor(float(loss_normalizer)))
 
@@ -248,6 +250,13 @@ class IrregularActionFormerHeadV2(nn.Module):
         missing_gt = ~candidate_mask.any(dim=0)
         if missing_gt.any():
             candidate_mask[:, missing_gt] = inside_gt_seg[:, missing_gt]
+        if self.use_regress_range:
+            max_regress_distance = reg_targets.max(dim=-1).values
+            inside_regress_range = torch.logical_and(
+                max_regress_distance >= point[:, 1, None],
+                max_regress_distance <= point[:, 2, None],
+            )
+            candidate_mask = torch.logical_and(candidate_mask, inside_regress_range)
         return candidate_mask
 
     def _build_assignment_weights(self, point, gt_segment, candidate_mask):

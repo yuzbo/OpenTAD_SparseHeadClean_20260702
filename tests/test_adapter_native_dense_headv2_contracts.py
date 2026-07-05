@@ -35,6 +35,13 @@ def load_mmengine_config_or_skip(rel_path):
     return mmengine_config.Config.fromfile(str(ROOT / rel_path))
 
 
+def load_frame_steps(cfg):
+    return {
+        split: next(step for step in getattr(cfg.dataset, split).pipeline if step.get("type") == "LoadFrames")
+        for split in ("train", "val", "test")
+    }
+
+
 def test_adapter_native_dense_headv2_safe_config_and_launcher_contract():
     detector = read("opentad/models/detectors/irregular_actionformer.py")
     temporal_grid = read("opentad/models/utils/temporal_grid.py")
@@ -123,6 +130,235 @@ def test_adapter_native_dense_headv2_config_loads_native_axis_contract_with_mmen
     assert int(cfg.workflow.val_start_epoch) == 40
     assert int(cfg.workflow.val_eval_interval) == 2
     assert "input_random_fixed_50pct_adapter_native_dense_headv2_safe" in cfg.work_dir
+
+
+def test_clean_repo_gitignore_keeps_source_dataset_packages_visible():
+    gitignore = read(".gitignore").splitlines()
+
+    assert "/datasets/" in gitignore
+    assert "datasets/" not in gitignore
+
+
+def test_irregular_headv3_default_does_not_train_unused_boundary_auxiliary():
+    head_impl = read("opentad/models/dense_heads/irregular_actionformer_head_v3.py")
+
+    assert "boundary_loss_weight=0.0" in head_impl
+
+
+def test_adapter_sparse_headv3_recommended_config_does_not_train_unused_boundary_auxiliary():
+    cfg = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_headv3_x_pdrop0_n16r4.py"
+    )
+
+    head = cfg.model.rpn_head
+    boundary_weight = float(head.get("boundary_loss_weight", 0.0))
+    boundary_inference = head.get("boundary_inference", {})
+
+    assert boundary_weight == 0.0 or bool(boundary_inference.get("enabled", False))
+
+
+def test_adapter_sparse_headv3_n16r4_ablation_configs_are_isolated():
+    nogeometry = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_headv3_x_pdrop0_nogeometry_n16r4.py"
+    )
+    reggate = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_headv3_x_pdrop0_reggate_n16r4.py"
+    )
+
+    assert nogeometry.model.rpn_head.type == "IrregularActionFormerHeadV3"
+    assert float(nogeometry.model.rpn_head.boundary_loss_weight) == 0.0
+    assert float(nogeometry.model.rpn_head.geometry_scale) == 0.0
+    assert not bool(nogeometry.model.rpn_head.get("use_regress_range", False))
+    assert "nogeometry_n16r4" in nogeometry.work_dir
+
+    assert reggate.model.rpn_head.type == "IrregularActionFormerHeadV3"
+    assert float(reggate.model.rpn_head.boundary_loss_weight) == 0.0
+    assert float(reggate.model.rpn_head.geometry_scale) == 0.25
+    assert bool(reggate.model.rpn_head.use_regress_range)
+    assert "reggate_n16r4" in reggate.work_dir
+
+
+def test_irregular_headv2_soft_assignment_has_optional_regression_range_gate():
+    head_impl = read("opentad/models/dense_heads/irregular_actionformer_head_v2.py")
+    head_v3_impl = read("opentad/models/dense_heads/irregular_actionformer_head_v3.py")
+
+    assert "use_regress_range=False" in head_impl
+    assert "self.use_regress_range = use_regress_range" in head_impl
+    assert "inside_regress_range" in head_impl
+    assert "candidate_mask = torch.logical_and(candidate_mask, inside_regress_range)" in head_impl
+    assert "use_regress_range=False" in head_v3_impl
+    assert "use_regress_range=use_regress_range" in head_v3_impl
+
+
+def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regression_axes():
+    hard_linear = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_n16r4.py"
+    )
+    hard_log = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_log_n16r4.py"
+    )
+    soft_topk1 = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_soft_topk1_binary_linear_n16r4.py"
+    )
+    openrange = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py"
+    )
+    absrange = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py"
+    )
+
+    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange):
+        head = cfg.model.rpn_head
+        assert cfg.model.projection.type == "GridAwareConv1DTransformerProj"
+        assert cfg.model.neck.type == "GridAwareFPNIdentity"
+        assert head.type == "IrregularActionFormerBridgeHead"
+        assert head.prior_generator.type == "IrregularPointGeneratorV2"
+        assert int(head.num_classes) == 20
+        assert int(head.num_convs) == 2
+        assert float(head.center_sample_radius) == 1.5
+        assert "adapter_irregular_bridge" in cfg.work_dir
+        assert "n16r4" in cfg.work_dir
+
+    assert hard_linear.model.rpn_head.assignment_mode == "hard"
+    assert hard_linear.model.rpn_head.regression_mode == "symmetric_linear"
+    assert "hard_linear_n16r4" in hard_linear.work_dir
+
+    assert hard_log.model.rpn_head.assignment_mode == "hard"
+    assert hard_log.model.rpn_head.regression_mode == "asymmetric_log1p"
+    assert "hard_log_n16r4" in hard_log.work_dir
+
+    assert soft_topk1.model.rpn_head.assignment_mode == "soft"
+    assert soft_topk1.model.rpn_head.regression_mode == "symmetric_linear"
+    assert int(soft_topk1.model.rpn_head.soft_assign_topk) == 1
+    assert soft_topk1.model.rpn_head.soft_reg_weight_mode == "binary"
+    assert soft_topk1.model.rpn_head.soft_cls_target_mode == "binary"
+    assert soft_topk1.model.rpn_head.soft_loss_normalizer_mode == "pos_count"
+    assert "soft_topk1_binary_linear_n16r4" in soft_topk1.work_dir
+
+    assert openrange.model.rpn_head.assignment_mode == "hard"
+    assert openrange.model.rpn_head.regression_mode == "symmetric_linear"
+    assert openrange.model.rpn_head.prior_generator.range_mode == "hard"
+    assert all(tuple(item) == (0, 10000) for item in openrange.model.rpn_head.prior_generator.regression_range)
+    assert "hard_linear_openrange_n16r4" in openrange.work_dir
+
+    assert absrange.model.rpn_head.assignment_mode == "hard"
+    assert absrange.model.rpn_head.regression_mode == "symmetric_linear"
+    assert absrange.model.rpn_head.prior_generator.range_mode == "absolute"
+    assert tuple(absrange.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
+    assert "hard_linear_absrange_n16r4" in absrange.work_dir
+
+
+def test_adapter_sparse_cross_over_configs_isolate_projection_neck_from_head():
+    dense_head_grid = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_gridaware_n16r4.py"
+    )
+    bridge_dense_pass = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_densepass_n16r4.py"
+    )
+    headv3_dense_pass = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_headv3_x_pdrop0_densepass_n16r4.py"
+    )
+
+    assert dense_head_grid.model.projection.type == "GridAwareConv1DTransformerProj"
+    assert dense_head_grid.model.neck.type == "GridAwareFPNIdentity"
+    assert dense_head_grid.model.rpn_head.type == "ActionFormerHead"
+    assert dense_head_grid.model.rpn_head.prior_generator.type == "PointGenerator"
+    assert "densehead_gridaware_n16r4" in dense_head_grid.work_dir
+
+    assert bridge_dense_pass.model.projection.type == "DensePassthroughConv1DTransformerProj"
+    assert bridge_dense_pass.model.neck.type == "DensePassthroughFPNIdentity"
+    assert bridge_dense_pass.model.rpn_head.type == "IrregularActionFormerBridgeHead"
+    assert bridge_dense_pass.model.rpn_head.assignment_mode == "hard"
+    assert bridge_dense_pass.model.rpn_head.regression_mode == "symmetric_linear"
+    assert "bridge_hard_linear_densepass_n16r4" in bridge_dense_pass.work_dir
+
+    assert headv3_dense_pass.model.projection.type == "DensePassthroughConv1DTransformerProj"
+    assert headv3_dense_pass.model.neck.type == "DensePassthroughFPNIdentity"
+    assert headv3_dense_pass.model.rpn_head.type == "IrregularActionFormerHeadV3"
+    assert float(headv3_dense_pass.model.rpn_head.boundary_loss_weight) == 0.0
+    assert float(headv3_dense_pass.model.rpn_head.geometry_scale) == 0.25
+    assert "headv3_x_pdrop0_densepass_n16r4" in headv3_dense_pass.work_dir
+
+
+def test_adapter_sparse_configs_make_gt_axis_contract_explicit():
+    headv3 = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_headv3_x_pdrop0_n16r4.py"
+    )
+    bridge = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_n16r4.py"
+    )
+    dense_control = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py"
+    )
+    dense_head_grid = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_gridaware_n16r4.py"
+    )
+
+    for cfg in (headv3, bridge):
+        for step in load_frame_steps(cfg).values():
+            assert not bool(step.remap_gt_to_selected_axis)
+
+    for cfg in (dense_control, dense_head_grid):
+        for step in load_frame_steps(cfg).values():
+            assert bool(step.remap_gt_to_selected_axis)
+
+
+def test_root_cause_notes_record_gt_axis_and_route_sanity_limits():
+    notes = read("root-cause-notes.md")
+
+    assert "selected-axis GT" in notes
+    assert "native-axis GT" in notes
+    assert "route sanity" in notes
+    assert "not a strong projection/neck attribution" in notes
+
+
+def test_irregular_point_generator_v2_full_cell_span_scale_on_linux():
+    torch = import_torch_or_skip()
+    point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
+
+    generator = point_generator.IrregularPointGeneratorV2(
+        strides=[1],
+        regression_range=[(1, 2)],
+        range_mode="hard",
+    )
+    feat = torch.zeros(1, 1, 3)
+    grid = {
+        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "cell_left": torch.tensor([[2.0, 2.0, 2.0]]),
+        "cell_right": torch.tensor([[2.0, 2.0, 2.0]]),
+    }
+
+    points = generator([feat], [grid])[0]
+
+    assert torch.allclose(points[..., 0], grid["center"])
+    assert torch.allclose(points[..., 1], torch.full((1, 3), 4.0))
+    assert torch.allclose(points[..., 2], torch.full((1, 3), 8.0))
+    assert torch.allclose(points[..., 3], grid["cell_left"])
+    assert torch.allclose(points[..., 4], grid["cell_right"])
+
+
+def test_irregular_point_generator_v2_absolute_range_does_not_scale_on_linux():
+    torch = import_torch_or_skip()
+    point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
+
+    generator = point_generator.IrregularPointGeneratorV2(
+        strides=[1],
+        regression_range=[(8, 16)],
+        range_mode="absolute",
+    )
+    feat = torch.zeros(1, 1, 3)
+    grid = {
+        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "cell_left": torch.tensor([[2.0, 4.0, 8.0]]),
+        "cell_right": torch.tensor([[2.0, 4.0, 8.0]]),
+    }
+
+    points = generator([feat], [grid])[0]
+
+    assert torch.allclose(points[..., 1], torch.full((1, 3), 8.0))
+    assert torch.allclose(points[..., 2], torch.full((1, 3), 16.0))
+    assert torch.allclose(points[..., 3], grid["cell_left"])
+    assert torch.allclose(points[..., 4], grid["cell_right"])
 
 
 def test_temporal_grid_explicit_cells_are_preserved_on_linux():

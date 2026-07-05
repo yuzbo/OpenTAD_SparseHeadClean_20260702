@@ -2,6 +2,7 @@ _base_ = ["./input_random_fixed_50pct_irregular_actionformer_headv3_x.py"]
 
 model = dict(
     rpn_head=dict(
+        boundary_loss_weight=0.2,
         boundary_inference=dict(
             enabled=True,
             peak_kernel=3,
