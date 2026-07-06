@@ -239,3 +239,19 @@ Reference snapshot:
   - `python -m pytest tests/test_adapter_native_dense_headv2_contracts.py -q`: `30 passed, 12 skipped`.
   - Direct verifier execution could not run locally because Windows torch import fails while loading `c10.dll`; this is consistent with the existing Linux-only torch test policy. Linux must run `python tools/verify_bridge_dense_equivalence.py` for actual tensor equivalence evidence.
 - No bridge/core head source changes were made in this stage. The verifier is intended to decide whether a core fix is needed before changing assignment/decode code.
+
+## Stage 4 Selected-Axis Random/Uniform Controls - 2026-07-06
+
+- Added a minimal selected-axis control matrix without changing model/evaluator/post-processing source:
+  - `input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py`: dense `ActionFormerHead`, deterministic equal-interval 50% input, selected-axis GT/proposals, `save_dict=True`.
+  - `input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py`: dense `ActionFormerHead`, random-fixed 50% input, selected-axis GT/proposals, `save_dict=True`.
+  - `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py`: bridge `absrange_expanded`, random-fixed 50% input, selected-axis GT/proposals, `save_dict=True`.
+- All three configs keep the N16R4 THUMOS paths through the existing `*_n16r4.py` bases and use unique `work_dir` names containing `selected_axis_control`.
+- Interpretation questions:
+  - Uniform dense selected-axis asks whether equal-interval selected-axis can reproduce the claimed near-65 dense behavior in the current repo.
+  - Random dense selected-axis asks whether random-fixed selected-axis is only a small drop from uniform selected-axis, rather than a collapse.
+  - Random bridge selected-axis `absrange_expanded` asks whether the native-axis irregular contract is the dominant reason the native bridge route sits near 40/42.
+- Added fail-closed precheck helpers only:
+  - `remote_runs/precheck_selected_axis_control_matrix_20260706.sh`
+  - `remote_runs/launch_selected_axis_control_precheck_20260706.sh`
+  These scripts only load configs, run `py_compile`, and run the local pytest contract. They do not launch training or Slurm.

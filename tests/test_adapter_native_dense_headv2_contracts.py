@@ -505,11 +505,112 @@ def test_detection_quality_candidate_configs_save_result_detection_json():
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
         "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py",
         "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
+        "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py",
     ]
 
     for rel_path in candidates:
         cfg = load_mmengine_config_or_skip(rel_path)
         assert bool(cfg.post_processing.save_dict), rel_path
+
+
+def test_selected_axis_random_uniform_control_matrix_contracts():
+    matrix = [
+        (
+            "uniform_dense_selected",
+            "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+            "uniform_fixed_subsample",
+            "ActionFormerHead",
+        ),
+        (
+            "random_dense_selected",
+            "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+            "random_fixed_subsample",
+            "ActionFormerHead",
+        ),
+        (
+            "random_bridge_selected_absrange_expanded",
+            "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py",
+            "random_fixed_subsample",
+            "IrregularActionFormerBridgeHead",
+        ),
+    ]
+    work_dirs = set()
+
+    for name, rel_path, method, head_type in matrix:
+        cfg = load_mmengine_config_or_skip(rel_path)
+        steps = load_frame_steps(cfg)
+
+        assert cfg.model.type == "IrregularActionFormer", name
+        assert cfg.model.rpn_head.type == head_type, name
+        assert bool(cfg.post_processing.save_dict), name
+        assert "selected_axis_control" in cfg.work_dir, name
+        assert cfg.work_dir not in work_dirs, name
+        work_dirs.add(cfg.work_dir)
+
+        assert cfg.dataset.train.ann_file == "/data/run01/sczc063/yuzibo/thumos14/annotations/thumos_14_anno.json", name
+        assert cfg.dataset.val.data_path == "/data/run01/sczc063/yuzibo/thumos14/test", name
+        assert cfg.dataset.test.data_path == "/data/run01/sczc063/yuzibo/thumos14/test", name
+
+        for split, step in steps.items():
+            assert step.method == method, (name, split)
+            assert abs(float(step.keep_ratio) - 0.5) < 1e-12, (name, split)
+            assert bool(step.remap_gt_to_selected_axis), (name, split)
+            assert int(step.target_len) == 384, (name, split)
+
+        assert steps["train"].method_base == "random_trunc", name
+        assert steps["val"].method_base == "sliding_window", name
+        assert steps["test"].method_base == "sliding_window", name
+
+        if head_type == "ActionFormerHead":
+            assert cfg.model.projection.type == "DensePassthroughConv1DTransformerProj", name
+            assert cfg.model.neck.type == "DensePassthroughFPNIdentity", name
+            assert cfg.model.rpn_head.prior_generator.type == "PointGenerator", name
+        else:
+            assert cfg.model.projection.type == "GridAwareConv1DTransformerProj", name
+            assert cfg.model.neck.type == "GridAwareFPNIdentity", name
+            assert cfg.model.rpn_head.assignment_mode == "hard", name
+            assert cfg.model.rpn_head.regression_mode == "symmetric_linear", name
+            assert cfg.model.rpn_head.prior_generator.type == "IrregularPointGeneratorV2", name
+            assert cfg.model.rpn_head.prior_generator.range_mode == "absolute", name
+            assert cfg.model.rpn_head.prior_generator.decode_scale_mode == "level_stride", name
+            assert cfg.model.rpn_head.prior_generator.radius_scale_mode == "level_stride", name
+            assert [tuple(item) for item in cfg.model.rpn_head.prior_generator.regression_range] == [
+                (0, 8),
+                (2, 16),
+                (4, 32),
+                (8, 64),
+                (16, 128),
+                (32, 10000),
+            ]
+
+
+def test_selected_axis_control_precheck_launcher_is_fail_closed():
+    precheck = read("remote_runs/precheck_selected_axis_control_matrix_20260706.sh")
+    launcher = read("remote_runs/launch_selected_axis_control_precheck_20260706.sh")
+
+    for cfg_name in (
+        "input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+        "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
+        "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py",
+    ):
+        assert cfg_name in precheck
+
+    assert "Config.fromfile" in precheck
+    assert "remap_gt_to_selected_axis" in precheck
+    assert "python -m py_compile" in precheck
+    assert "python -m pytest tests/test_adapter_native_dense_headv2_contracts.py -q" in precheck
+    assert "tools/train.py" not in precheck
+    assert "torchrun" not in precheck
+    assert "sbatch" not in precheck
+    assert "srun" not in precheck
+
+    assert "precheck_selected_axis_control_matrix_20260706.sh" in launcher
+    assert "tools/train.py" not in launcher
+    assert "torchrun" not in launcher
+    assert "sbatch" not in launcher
+    assert "srun" not in launcher
 
 
 def test_bridge_head_half_cell_scale_mode_on_linux():
