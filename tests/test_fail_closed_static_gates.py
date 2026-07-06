@@ -185,8 +185,11 @@ def test_stage2_gpu1_short_waiter_requires_true_idle_gpu1_before_launch():
 
     assert "GPU_INDEX=\"${GPU_INDEX:-1}\"" in waiter
     assert "GPU_MEM_FREE_MAX_MIB=\"${GPU_MEM_FREE_MAX_MIB:-100}\"" in waiter
+    assert "SSH_TIMEOUT_SECONDS=\"${SSH_TIMEOUT_SECONDS:-20}\"" in waiter
+    assert 'timeout "$SSH_TIMEOUT_SECONDS" /usr/bin/ssh "$NODE"' in waiter
     assert "--query-gpu=index,uuid,memory.used" in waiter
     assert "--query-compute-apps=gpu_uuid,pid,process_name,used_memory" in waiter
+    assert "echo 999" in waiter
     assert '[[ "$mem" -le "$GPU_MEM_FREE_MAX_MIB" && "$apps" -eq 0 ]]' in waiter
     assert "short_validation_already_active" in waiter
     assert "bash \"$TARGET_LAUNCHER\"" in waiter

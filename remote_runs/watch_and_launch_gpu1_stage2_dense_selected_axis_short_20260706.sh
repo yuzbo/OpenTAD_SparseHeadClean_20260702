@@ -9,6 +9,7 @@ WAITER_LOG="$LOG_DIR/${RUN_TAG}.log"
 NODE="${NODE:-g0030}"
 GPU_INDEX="${GPU_INDEX:-1}"
 GPU_MEM_FREE_MAX_MIB="${GPU_MEM_FREE_MAX_MIB:-100}"
+SSH_TIMEOUT_SECONDS="${SSH_TIMEOUT_SECONDS:-20}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-43200}"
 TARGET_LAUNCHER="$ROOT/remote_runs/launch_gpu1_stage2_dense_selected_axis_short_20260706.sh"
@@ -17,32 +18,47 @@ mkdir -p "$LOG_DIR"
 exec > >(tee -a "$WAITER_LOG") 2>&1
 
 log_msg() { echo "$(date '+%F %T') [stage2-short-waiter] $*"; }
-remote_gpu() { env -u LD_LIBRARY_PATH /usr/bin/ssh "$NODE" "$@"; }
+remote_gpu() { env -u LD_LIBRARY_PATH timeout "$SSH_TIMEOUT_SECONDS" /usr/bin/ssh "$NODE" "$@"; }
 
 gpu1_uuid_and_mem() {
-  remote_gpu /usr/bin/nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader,nounits \
-    | awk -F, -v idx="$GPU_INDEX" '
-        {
-          gsub(/^ +| +$/, "", $1);
-          gsub(/^ +| +$/, "", $2);
-          gsub(/^ +| +$/, "", $3);
-          if ($1 == idx) {
-            print $2, $3;
-          }
-        }'
+  local output status
+  set +e
+  output="$(remote_gpu /usr/bin/nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader,nounits 2>/dev/null)"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    return 0
+  fi
+  awk -F, -v idx="$GPU_INDEX" '
+      {
+        gsub(/^ +| +$/, "", $1);
+        gsub(/^ +| +$/, "", $2);
+        gsub(/^ +| +$/, "", $3);
+        if ($1 == idx) {
+          print $2, $3;
+        }
+      }' <<<"$output"
 }
 
 gpu1_compute_count() {
   local uuid="$1"
-  remote_gpu /usr/bin/nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null \
-    | awk -F, -v uuid="$uuid" '
-        {
-          gsub(/^ +| +$/, "", $1);
-          if ($1 == uuid) {
-            count++;
-          }
+  local output status
+  set +e
+  output="$(remote_gpu /usr/bin/nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null)"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo 999
+    return 0
+  fi
+  awk -F, -v uuid="$uuid" '
+      {
+        gsub(/^ +| +$/, "", $1);
+        if ($1 == uuid) {
+          count++;
         }
-        END { print count + 0; }'
+      }
+      END { print count + 0; }' <<<"$output"
 }
 
 short_validation_already_active() {
