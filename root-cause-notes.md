@@ -21,6 +21,28 @@ Strict FAIL review boundary absorbed on 2026-07-06: the external response in `pr
 
 Stage-FIX-A bridge scale contract status on 2026-07-06: the BridgeHead scale contract now fails closed for legacy full-cell-span semantics. `IrregularActionFormerBridgeHead` defaults to the official-compatible pair `center_radius_scale="point_radius"` and `reg_denom_mode="left_right_mean"`. Any route that still asks for `full_cell_span` must also set `allow_legacy_full_cell_span=True`, which marks it as a reproducibility ablation rather than dense-equivalent evidence. The historical `bridge_hard_linear`, `openrange`, and `absrange` configs are kept as explicit legacy opt-in controls; corrected `radiuslevel`, `levelstride`, `absrange_expanded`, `shortgate`, and selected-axis `absrange_expanded` configs explicitly clear the legacy opt-in and keep level-stride decode/radius semantics. The earlier `step0b/step1-4/y_pointset` BridgeHead exploration configs also now state the official-compatible scale contract explicitly, so future config loads do not silently depend on class defaults.
 
+Preflight/audit FAIL review boundary absorbed on 2026-07-06: the external response in `pro-review-fail-preflight-audit-20260706.md` reviews current GitHub commit `114f72c` against upstream OpenTAD and gives `CURRENT_TOTAL_VERDICT: FAIL`. The original response is recorded verbatim with SHA256 `8D9A7F200FFD783D179D76B44E3A5D92A1E36103699B1075FF761608AAC51D30`. Its gate is stricter than the code-fix status above: `SYNC_REMOTE_FOR_PREFLIGHT: YES`, `RUN_STAGE_0_1_2_ONLY: YES`, `START_LONG_TRAINING: NO`, and `CLAIM_SPARSE_HEAD_RESULT: NO`. Treat this as the active execution boundary until superseded by Linux evidence.
+
+New blockers from the preflight/audit FAIL review:
+
+- Official dense selected-axis sanity around the equal-interval 50% `Average-mAP ~= 65` reference remains unproved in the current repository; without it, the `65 -> 40/42` gap cannot be attributed to HeadV3 or sparse-head design.
+- `IrregularActionFormerBridgeHead` still has a non-official missing-center fallback: when center sampling yields no candidate for a GT, it can fall back to all inside-GT points. This must become an explicit legacy/research option, not part of the official-compatible bridge route.
+- `convert_to_seconds` still infers source axis from metadata. Since detector post-processing may already convert selected-axis proposals to native axis before NMS, utilities need an explicit `source_axis` to prevent accidental double conversion in tools or future call sites.
+- Current eval/test leakage protection is transform-level only. A whole-config preflight scanner is still needed for raw prediction, teacher/cache, diagnostic GT, or post-processing shortcut fields outside `LoadFrames`.
+- `tools/verify_bridge_dense_equivalence.py` now covers generated V2 points, but the review says it is still too narrow: B=1 synthetic only, no real masks/padding, no full dataloader batch, no post-processing/seconds conversion, no missing-center fallback counterexample, and no full `__init__` construction path.
+- `tools/audit_sparse_head_assignment.py` must grow an official `AnchorFreeHead` target builder and same-batch exact diff before Stage 1 can be considered passed.
+
+Actionable patch queue from this review, in priority order:
+
+1. Add `allow_center_fallback_inside_gt=False` to `IrregularActionFormerBridgeHead`, disable fallback by default for official-compatible routes, and allow it only in explicit legacy/research ablations.
+2. Add an `official_actionformer` / dense-compatible mode to `IrregularPointGeneratorV2` that locks `range_mode="absolute"`, `decode_scale_mode="level_stride"`, and `radius_scale_mode="level_stride"`.
+3. Extend bridge dense-equivalence verification to batched, masked generated V2 points and add a missing-center fallback negative case.
+4. Add whole-config fail-closed preflight scanning for diagnostic GT, teacher/cache, raw-prediction, and post-processing shortcut fields.
+5. Make seconds conversion source axis explicit, and update detector/tools to pass `source_axis="native"` after selected-to-native conversion.
+6. Make any single-class post-processing path obey the same threshold/top-k/NMS prefiltering contract as the multiclass path.
+
+Updated experiment boundary from this review: run Stage 0 Linux preflight first, then Stage 1 same-batch official-vs-bridge assignment audit, then Stage 2 official dense selected-axis sanity. Do not start or continue new long training from these fixes until Stage 0-2 pass.
+
 Reference snapshot:
 
 | Experiment | Status | Avg mAP | Notes |
