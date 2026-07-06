@@ -206,8 +206,11 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     absrange = load_mmengine_config_or_skip(
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py"
     )
+    absrange_radiuslevel = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py"
+    )
 
-    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange):
+    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange, absrange_radiuslevel):
         head = cfg.model.rpn_head
         assert cfg.model.projection.type == "GridAwareConv1DTransformerProj"
         assert cfg.model.neck.type == "GridAwareFPNIdentity"
@@ -246,6 +249,86 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange.model.rpn_head.prior_generator.range_mode == "absolute"
     assert tuple(absrange.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
     assert "hard_linear_absrange_n16r4" in absrange.work_dir
+
+    assert absrange_radiuslevel.model.rpn_head.assignment_mode == "hard"
+    assert absrange_radiuslevel.model.rpn_head.regression_mode == "symmetric_linear"
+    assert absrange_radiuslevel.model.rpn_head.center_radius_scale == "half_cell_span"
+    assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "half_cell_span"
+    assert absrange_radiuslevel.model.rpn_head.prior_generator.range_mode == "absolute"
+    assert tuple(absrange_radiuslevel.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
+    assert "hard_linear_absrange_radiuslevel_n16r4" in absrange_radiuslevel.work_dir
+
+
+def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
+    bridge_impl = read("opentad/models/dense_heads/irregular_actionformer_bridge_head.py")
+
+    assert "center_radius_scale=\"full_cell_span\"" in bridge_impl
+    assert "reg_denom_mode=\"full_cell_span\"" in bridge_impl
+    assert "def _scale_base(" in bridge_impl
+    assert 'mode == "full_cell_span"' in bridge_impl
+    assert 'mode == "half_cell_span"' in bridge_impl
+    assert 'mode == "min_side"' in bridge_impl
+    assert 'mode == "left_right_mean"' in bridge_impl
+
+
+def test_sparse_head_assignment_audit_tool_contract():
+    script = read("tools/audit_sparse_head_assignment.py")
+
+    assert "sample_id" in script
+    assert "video_name" in script
+    assert "gt_length_bucket" in script
+    assert "gt_covered_any" in script
+    assert "gt_covered_level_bitmap" in script
+    assert "per_level_pos_count" in script
+    assert "per_level_candidate_count_after_range" in script
+    assert "range_fail_count_by_level" in script
+    assert "center_fail_count_by_level" in script
+    assert "decode_reconstruction_max_error" in script
+    assert "radius_base_p50" in script
+    assert "valid_mask_true_count" in script
+    assert "--configs" in script
+    assert "--num-batches" in script
+    assert "--seed" in script
+
+
+def test_bridge_head_half_cell_scale_mode_on_linux():
+    torch = import_torch_or_skip()
+    mmengine_config = pytest.importorskip("mmengine.config")
+    bridge_head = pytest.importorskip("opentad.models.dense_heads.irregular_actionformer_bridge_head")
+    config_dict = mmengine_config.ConfigDict
+
+    head = bridge_head.IrregularActionFormerBridgeHead(
+        num_classes=20,
+        in_channels=512,
+        feat_channels=512,
+        num_convs=1,
+        prior_generator=config_dict(
+            type="IrregularPointGeneratorV2",
+            strides=[1],
+            regression_range=[(0, 4)],
+            range_mode="absolute",
+        ),
+        loss=config_dict(cls_loss=dict(type="FocalLoss"), reg_loss=dict(type="DIOULoss")),
+        center_radius_scale="half_cell_span",
+        reg_denom_mode="half_cell_span",
+    )
+    left_scale = torch.tensor([2.0, 4.0])
+    right_scale = torch.tensor([2.0, 8.0])
+    point_scale = left_scale + right_scale
+
+    assert torch.allclose(
+        head._scale_base(left_scale, right_scale, point_scale, "half_cell_span"),
+        torch.tensor([2.0, 6.0]),
+    )
+
+    encoded = head._encode_regression_targets(
+        torch.tensor([2.0, 6.0]),
+        torch.tensor([4.0, 12.0]),
+        left_scale,
+        right_scale,
+        point_scale,
+    )
+    assert torch.allclose(encoded, torch.tensor([[1.0, 2.0], [1.0, 2.0]]))
 
 
 def test_adapter_sparse_cross_over_configs_isolate_projection_neck_from_head():

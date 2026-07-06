@@ -1,5 +1,5 @@
 ---
-updated: 2026-07-04
+updated: 2026-07-05
 status: active
 scope: HeadV3 performance-collapse root-cause hypotheses for the 50% fixed THUMOS adapter sparse-head route.
 out-of-scope: Raw logs, checkpoints, generated result archives, and historical wiki material.
@@ -22,6 +22,7 @@ Reference snapshot:
 | current fixed | complete | 40.20 | mAP@0.3/0.4/0.5/0.6/0.7 = 64.82/53.26/40.67/27.62/14.63 |
 | nogeometry | complete | 39.32 | 64.40/52.85/39.58/26.47/13.28; geometry is not the first-order cause |
 | reggate | complete | 38.32 | 61.98/53.32/40.37/25.14/10.83; range gate alone does not fix the route |
+| bridge hard linear openrange | complete | 42.44 | 65.56/56.44/44.29/30.73/15.20; restores all-level positives but high-tIoU remains weak |
 
 ## Main Hypotheses
 
@@ -53,10 +54,41 @@ Reference snapshot:
 
    `IrregularPointGeneratorV2` uses the full local cell span `cell_left + cell_right` as the regression-range point scale, while preserving `cell_left` and `cell_right` as separate decode scales in the point tensor. This is different from `temporal_grid["level_scale"]`, which stores `0.5 * (cell_left + cell_right)`. The bridge experiments should be interpreted with this scale convention in mind.
 
+8. Openrange confirms the range failure, but not the high-IoU failure.
+
+   `bridge_hard_linear_openrange` finishes at `Average-mAP=42.44`, above the `HeadV3 fixed=40.20` gate and above the old `headv3 fixed=42.41` reference by a hair. However, the gain is uneven: compared with current fixed, tIoU 0.4/0.5/0.6 improve meaningfully, while tIoU 0.7 only moves from `14.63` to `15.20`. This means restoring positives across FPN levels mainly improves coarse recall / mid-IoU localization. The remaining high-IoU weakness is now more likely due to boundary calibration rather than mere lack of positive samples.
+
+   Leading suspects for the remaining high-IoU gap:
+   - Openrange removes level specialization entirely. It gives every level positives for every duration, which can improve recall but may create duplicate, poorly calibrated proposals across levels.
+   - Symmetric-linear regression still uses irregular cell-scale denominators. With sparse/native-axis cells, small decode-scale mismatch directly becomes boundary error at high tIoU.
+   - Native-axis sparse sampling can lose exact boundary evidence. Dense control remains selected-axis GT, so the 51.59 reference is still not a pure head-only comparison.
+   - The bridge route lacks boundary auxiliary supervision and explicit boundary refinement, so it can recover proposal coverage without recovering sub-cell boundary precision.
+   - Post-processing score / NMS calibration may still be tuned for dense ActionFormer distributions, not duplicated openrange all-level predictions.
+
 ## Interpretation Plan
+
+- 2026-07-05 implementation update:
+  - Added `center_radius_scale` and `reg_denom_mode` knobs to `IrregularActionFormerBridgeHead`.
+  - Default values remain `full_cell_span`, preserving existing `bridge_hard_linear` behavior.
+  - Added `bridge_hard_linear_absrange_radiuslevel_n16r4`, which combines `range_mode="absolute"` with `half_cell_span` center radius and symmetric-linear regression denominator.
+  - Added `tools/audit_sparse_head_assignment.py` to compare current hard, openrange, absrange, and radius-level corrected configs on the same batch before any further long training.
+  - Same-batch audit completed on remote `g0030` under Slurm allocation `1118197` with output at `/data/run01/sczc063/yuzibo/OpenTAD_SparseHeadClean_20260702/logs/sparse_head_assignment_audit_20260705/same_batch_audit_20260705_20260705_205007/`.
+  - Audit result: current `bridge_hard_linear` has `pos_by_level=[111, 21, 0, 0, 0, 0]` with `candidates_after_range=[111, 21, 0, 0, 0, 0]`. This confirms the current core failure: the regression range filters effectively crush positives into level0/1, leaving level2-5 with no positive samples.
+  - `bridge_hard_linear_openrange` restores all levels with `pos_by_level=[195, 163, 104, 56, 34, 14]` and full `37/37` GT coverage. It is the strongest current long-training candidate and directly validates the regression-range failure hypothesis.
+  - `bridge_hard_linear_absrange` also moves positives into mid/high levels with `pos_by_level=[9, 9, 23, 29, 11, 0]`, but it is much sparser and covers `36/37` GTs. Treat it as the second-priority corrected-range control, below openrange.
+  - `bridge_hard_linear_absrange_radiuslevel` does not improve positives over absrange and increases center-filter failures (`center_fail_by_level=[347, 131, 29, 3, 0, 0]`), so it should not be long-trained now.
+  - Current decision: run `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py` first on remote GPU1. Use `HeadV3 fixed=40.20` as the gate: if the first validation is clearly above `40.20`, continue the full run; if it remains poor, shift diagnosis from level-positive recovery to regression encode/decode, native-axis GT, fair dense comparisons, proposal recall, per-level recall, and high-IoU localization error.
+  - `bridge_hard_linear_openrange` completed at `42.44`, so the range-collapse hypothesis is supported but incomplete. Next run `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py` as the corrected-range control.
+  - If `absrange` trails openrange badly, openrange's broad recall is doing the work and absolute dense-like ranges may be too sparse under native-axis cells.
+  - If `absrange` matches or beats openrange, the next target is not "more positives" but scale-calibrated, dense-like assignment / decode.
 
 - Stop prioritizing geometry ablations until the supervision path is repaired.
 - Stop treating missing regression range gate as a standalone primary cause; the completed `reggate` run refutes that narrow hypothesis.
+- Audit before long-training the corrected bridge route:
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_n16r4.py`
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py`
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py`
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py`
 - Run dense-like bridge ablations first:
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_n16r4.py`
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_log_n16r4.py`

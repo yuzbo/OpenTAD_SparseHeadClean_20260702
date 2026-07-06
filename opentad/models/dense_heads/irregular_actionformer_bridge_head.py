@@ -37,6 +37,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
         soft_reg_weight_mode="soft",
         soft_cls_target_mode="soft",
         reg_denom_floor=0.5,
+        center_radius_scale="full_cell_span",
+        reg_denom_mode="full_cell_span",
         filter_similar_gt=True,
         cls_loss_weight=1.0,
         reg_loss_weight=None,
@@ -67,6 +69,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
         self.soft_reg_weight_mode = soft_reg_weight_mode
         self.soft_cls_target_mode = soft_cls_target_mode
         self.reg_denom_floor = reg_denom_floor
+        self.center_radius_scale = center_radius_scale
+        self.reg_denom_mode = reg_denom_mode
         self.filter_similar_gt = filter_similar_gt
         self.cls_loss_weight = cls_loss_weight
         self.reg_loss_weight = reg_loss_weight
@@ -87,6 +91,11 @@ class IrregularActionFormerBridgeHead(nn.Module):
             raise ValueError(f"Unsupported soft_reg_weight_mode: {self.soft_reg_weight_mode}")
         if self.soft_cls_target_mode not in {"soft", "binary"}:
             raise ValueError(f"Unsupported soft_cls_target_mode: {self.soft_cls_target_mode}")
+        scale_base_modes = {"full_cell_span", "half_cell_span", "min_side", "left_right_mean"}
+        if self.center_radius_scale not in scale_base_modes:
+            raise ValueError(f"Unsupported center_radius_scale: {self.center_radius_scale}")
+        if self.reg_denom_mode not in scale_base_modes:
+            raise ValueError(f"Unsupported reg_denom_mode: {self.reg_denom_mode}")
         if self.tower_kernel_size <= 0 or self.tower_kernel_size % 2 == 0:
             raise ValueError(f"tower_kernel_size must be a positive odd integer, got {self.tower_kernel_size}")
         if self.predictor_kernel_size <= 0 or self.predictor_kernel_size % 2 == 0:
@@ -230,6 +239,17 @@ class IrregularActionFormerBridgeHead(nn.Module):
             right_scale = point_scale
         return center, reg_min, reg_max, left_scale, right_scale, point_scale
 
+    def _scale_base(self, left_scale, right_scale, point_scale, mode):
+        if mode == "full_cell_span":
+            return point_scale.clamp_min(self.reg_denom_floor)
+        if mode == "half_cell_span":
+            return (0.5 * point_scale).clamp_min(self.reg_denom_floor)
+        if mode == "min_side":
+            return torch.minimum(left_scale, right_scale).clamp_min(self.reg_denom_floor)
+        if mode == "left_right_mean":
+            return (0.5 * (left_scale + right_scale)).clamp_min(self.reg_denom_floor)
+        raise ValueError(f"Unsupported scale mode: {mode}")
+
     def _level_offsets(self, points):
         offsets = []
         start = 0
@@ -241,10 +261,11 @@ class IrregularActionFormerBridgeHead(nn.Module):
 
     def _encode_regression_targets(self, left, right, left_scale, right_scale, point_scale):
         if self.regression_mode == "symmetric_linear":
+            denom = self._scale_base(left_scale, right_scale, point_scale, self.reg_denom_mode)
             return torch.stack(
                 [
-                    (left / point_scale).clamp_min(0.0),
-                    (right / point_scale).clamp_min(0.0),
+                    (left / denom).clamp_min(0.0),
+                    (right / denom).clamp_min(0.0),
                 ],
                 dim=-1,
             )
@@ -263,8 +284,9 @@ class IrregularActionFormerBridgeHead(nn.Module):
         center, _, _, left_scale, right_scale, point_scale = self._point_fields(point_tensor)
 
         if self.regression_mode == "symmetric_linear":
-            left = reg_tensor[:, :, 0] * point_scale
-            right = reg_tensor[:, :, 1] * point_scale
+            denom = self._scale_base(left_scale, right_scale, point_scale, self.reg_denom_mode)
+            left = reg_tensor[:, :, 0] * denom
+            right = reg_tensor[:, :, 1] * denom
         else:
             left = torch.expm1(reg_tensor[:, :, 0].clamp_min(0.0)) * left_scale
             right = torch.expm1(reg_tensor[:, :, 1].clamp_min(0.0)) * right_scale
@@ -483,7 +505,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
 
             if self.center_sample == "radius":
                 center_pts = 0.5 * (gt_segs[:, :, 0] + gt_segs[:, :, 1])
-                radius = point_scale[:, None] * self.center_sample_radius
+                radius_base = self._scale_base(left_scale, right_scale, point_scale, self.center_radius_scale)
+                radius = radius_base[:, None] * self.center_sample_radius
                 t_mins = center_pts - radius
                 t_maxs = center_pts + radius
                 cb_left = center_t[:, None] - torch.maximum(t_mins, gt_segs[:, :, 0])
