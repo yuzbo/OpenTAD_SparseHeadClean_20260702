@@ -103,3 +103,73 @@ def test_gpu1_same_batch_runner_compares_open_abs_levelstride_not_radiuslevel():
     assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py" in runner
     assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py" in runner
     assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py" not in runner
+
+
+def test_stage2_resource_boundary_short_gpu1_but_long_slurm_only():
+    short_runner = (ROOT / "remote_runs/run_gpu1_stage2_dense_selected_axis_short_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+    short_launcher = (ROOT / "remote_runs/launch_gpu1_stage2_dense_selected_axis_short_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+    slurm_body = (ROOT / "remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+    submitter = (ROOT / "remote_runs/submit_stage2_dense_selected_axis_long_slurm_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (short_runner, slurm_body, submitter):
+        assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py" in text
+        assert "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py" in text
+
+    assert "ALLOW_GPU1_SHORT_VALIDATION" in short_runner
+    assert 'SLURM_JOB_ID:-}" != "1118197"' in short_runner
+    assert "workflow.end_epoch=2" in short_runner
+    assert "workflow.val_start_epoch=1" in short_runner
+    assert "work_dir=$short_work_dir" in short_runner
+    assert "srun --jobid=1118197 --overlap -w g0030" in short_launcher
+    assert "export CUDA_VISIBLE_DEVICES=1" in short_launcher
+
+    assert "#SBATCH --gpus=1" in slurm_body
+    assert "#SBATCH --exclude=g0030" in slurm_body
+    assert "tools/check_fail_closed_config.py" in slurm_body
+    assert "tools/train.py" in slurm_body
+    assert "torchrun" in slurm_body
+    assert "srun --jobid=1118197" not in slurm_body
+    assert "--overlap" not in slurm_body
+    assert "export CUDA_VISIBLE_DEVICES=1" not in slurm_body
+    assert 'SLURM_JOB_ID:-}" == "1118197"' in slurm_body
+    assert '"$(hostname -s)" == "g0030"' in slurm_body
+
+    assert "sbatch" in submitter
+    assert '--exclude="${EXCLUDE_NODE:-g0030}"' in submitter
+    assert "srun --jobid=1118197" not in submitter
+    assert "--overlap" not in submitter
+    assert "CUDA_VISIBLE_DEVICES=1" not in submitter
+
+
+def test_legacy_gpu1_long_training_entrypoints_are_disabled():
+    legacy_scripts = [
+        "run_gpu1_bridge_openrange_long_20260705.sh",
+        "launch_gpu1_bridge_openrange_long_20260705.sh",
+        "run_gpu1_bridge_absrange_long_20260706.sh",
+        "launch_gpu1_bridge_absrange_long_20260706.sh",
+        "run_gpu1_bridge_absrange_expanded_long_20260706.sh",
+        "launch_gpu1_bridge_absrange_expanded_long_20260706.sh",
+        "run_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh",
+        "launch_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh",
+        "run_gpu1_uniform_fixed_dense_control_long_20260706.sh",
+        "launch_gpu1_uniform_fixed_dense_control_long_20260706.sh",
+        "watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh",
+        "launch_watch_gpu1_bridge_absrange_expanded_20260706.sh",
+    ]
+
+    for script in legacy_scripts:
+        text = (ROOT / "remote_runs" / script).read_text(encoding="utf-8")
+        assert "DEPRECATED_GPU1_LONG_TRAINING_DISABLED" in text, script
+        assert "exit 64" in text, script
+        assert "tools/train.py" not in text, script
+        assert "torchrun" not in text, script
+        assert "srun --jobid=1118197" not in text, script
+        assert "CUDA_VISIBLE_DEVICES=1" not in text, script

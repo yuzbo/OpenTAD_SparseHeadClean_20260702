@@ -1210,57 +1210,47 @@ def test_uniform_fixed_50pct_controls_keep_axis_contracts_and_only_change_sampli
         assert not bool(step.remap_gt_to_selected_axis)
 
 
-def test_uniform_fixed_50pct_remote_launchers_are_gpu1_slurm_preflighted():
+def test_uniform_fixed_50pct_old_gpu1_long_launchers_are_disabled_and_slurm_replaces_them():
     dense_runner = read("remote_runs/run_gpu1_uniform_fixed_dense_control_long_20260706.sh")
     dense_launcher = read("remote_runs/launch_gpu1_uniform_fixed_dense_control_long_20260706.sh")
     bridge_runner = read("remote_runs/run_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh")
     bridge_launcher = read("remote_runs/launch_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh")
+    submitter = read("remote_runs/submit_stage2_dense_selected_axis_long_slurm_20260706.sh")
+    slurm_body = read("remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh")
 
-    assert "input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py" in dense_runner
-    assert "gpu1_uniform_fixed_dense_control_long" in dense_runner
-    assert "head= ActionFormerHead" not in dense_runner
-    assert "CUDA_VISIBLE_DEVICES=1" in dense_runner
-    assert "config load preflight" in dense_runner
-    assert "py_compile preflight" in dense_runner
-    assert "torchrun" in dense_runner
-    assert "--nproc_per_node=1" in dense_runner
+    for old_script in (dense_runner, dense_launcher, bridge_runner, bridge_launcher):
+        assert "DEPRECATED_GPU1_LONG_TRAINING_DISABLED" in old_script
+        assert "exit 64" in old_script
+        assert "torchrun" not in old_script
+        assert "tools/train.py" not in old_script
+        assert "srun --jobid=1118197" not in old_script
+        assert "CUDA_VISIBLE_DEVICES=1" not in old_script
 
-    assert "input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py" in bridge_runner
-    assert "gpu1_uniform_fixed_bridge_absrange_expanded_long" in bridge_runner
-    assert "CUDA_VISIBLE_DEVICES=1" in bridge_runner
-    assert "config load preflight" in bridge_runner
-    assert "py_compile preflight" in bridge_runner
-    assert "torchrun" in bridge_runner
-    assert "--nproc_per_node=1" in bridge_runner
+    assert "sbatch" in submitter
+    assert '--exclude="${EXCLUDE_NODE:-g0030}"' in submitter
+    assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py" in submitter
+    assert "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py" in submitter
+    assert "srun --jobid=1118197" not in submitter
+    assert "CUDA_VISIBLE_DEVICES=1" not in submitter
 
-    for launcher in (dense_launcher, bridge_launcher):
-        assert "srun --jobid=1118197" in launcher
-        assert "--overlap -w g0030 -N1 -n1" in launcher
-        assert "CUDA_VISIBLE_DEVICES=1" in launcher
+    assert "#SBATCH --gpus=1" in slurm_body
+    assert "#SBATCH --exclude=g0030" in slurm_body
+    assert "tools/check_fail_closed_config.py" in slurm_body
+    assert "torchrun" in slurm_body
+    assert "srun --jobid=1118197" not in slurm_body
+    assert "export CUDA_VISIBLE_DEVICES=1" not in slurm_body
 
 
 def test_absrange_expanded_waiter_only_launches_after_old_gpu1_step_clears():
     waiter = read("remote_runs/watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh")
     launcher = read("remote_runs/launch_watch_gpu1_bridge_absrange_expanded_20260706.sh")
 
-    assert 'OLD_STEP_ID="${OLD_STEP_ID:-1118197.621}"' in waiter
-    assert 'SLURM_JOB_ID_TARGET="${SLURM_JOB_ID_TARGET:-1118197}"' in waiter
-    assert 'TARGET_WORK_DIR="$ROOT/exps/thumos/adatad/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4/gpu1_id1"' in waiter
-    assert 'TARGET_LAUNCHER="$ROOT/remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh"' in waiter
-    assert 'LOG_DIR="$ROOT/logs/gpu1_bridge_absrange_expanded_waiter"' in waiter
-    assert "squeue --steps -j \"$SLURM_JOB_ID_TARGET\"" in waiter
-    assert "grep -Fxq \"$OLD_STEP_ID\"" in waiter
-    assert "target_already_started" in waiter
-    assert "MAX_WAIT_SECONDS" in waiter
-    assert "POLL_SECONDS" in waiter
-    assert "bash \"$TARGET_LAUNCHER\"" in waiter
-    assert "run_gpu1_bridge_absrange_expanded_long_20260706.sh" not in waiter
-
-    assert "nohup bash" in launcher
-    assert "watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh" in launcher
-    assert "logs/gpu1_bridge_absrange_expanded_waiter" in launcher
-    assert "pgrep -f" in launcher
-    assert "waiter already running" in launcher
+    for text in (waiter, launcher):
+        assert "DEPRECATED_GPU1_LONG_TRAINING_DISABLED" in text
+        assert "exit 64" in text
+        assert "srun --jobid=1118197" not in text
+        assert "torchrun" not in text
+        assert "tools/train.py" not in text
 
 
 def test_loadframes_records_explicit_axis_contract_metadata():
