@@ -129,6 +129,12 @@ Reference snapshot:
     - `levelstride`: GT coverage `20/38`, `pos_by_level=[8, 18, 3, 0, 0, 0]`.
     - `openrange`: GT coverage `38/38`, `pos_by_level=[200, 140, 90, 65, 34, 15]`.
     - Interpretation: `absrange_expanded` is now the strongest bounded native-axis candidate. It restores all GT coverage and level5 positives without openrange's all-level flood.
+  - Added `tools/analyze_detection_quality.py` for post-training high-IoU localization diagnostics. It consumes standard OpenTAD annotation/result JSON files and reports per-GT best IoU, tIoU recall, GT-length bucket coverage, and normalized start/end boundary error. Use this after each completed candidate to separate three failure modes: no proposal near the GT, proposal near the GT but boundary-calibration error, and score/NMS ranking error.
+  - Added remote launch helpers for the next long run:
+    - `remote_runs/run_gpu1_bridge_absrange_expanded_long_20260706.sh`
+    - `remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh`
+    These helpers run config-load and `py_compile` preflight before training `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`.
+  - Deployment status at 2026-07-06 11:45 CST: GPU1 is still occupied by the older `bridge_hard_linear_absrange_n16r4` long run (`Slurm step 1118197.621`, around epoch 25/60). That run was launched before the latest `absrange_expanded` candidate and should not be treated as post-fix evidence. Do not start `absrange_expanded` until GPU1 is free or the user explicitly asks to stop the older run.
   - Added explicit axis contract metadata from `LoadFrames`: `irregular_gt_axis`, `irregular_proposal_axis`, `irregular_postprocess_axis`, and `irregular_axis_contract`.
   - Added runtime axis-contract checks in `IrregularActionFormer` before train/test/post-processing, plus optional proposal-axis debug dumping through `post_cfg.debug_dump_proposals`, `debug_dump_path`, and `debug_dump_topk`.
   - Fixed a selected-axis route bug: when `remap_gt_to_selected_axis=True`, the bridge/head temporal grid must emit centers on the selected index axis `0..N`, while native selected positions are kept only for seconds conversion. Previously the selected-axis branch reused native selected positions as head centers, which could silently mismatch proposal coordinates.

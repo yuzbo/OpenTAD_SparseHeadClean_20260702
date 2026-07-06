@@ -340,6 +340,64 @@ def test_sparse_head_assignment_audit_tool_contract():
     assert "--seed" in script
 
 
+def test_detection_quality_analyzer_reports_high_iou_recall_and_boundary_error(tmp_path):
+    analyzer = load_module("tools/analyze_detection_quality.py", "detection_quality_analyzer")
+
+    gt = {
+        "database": {
+            "video_1": {
+                "subset": "validation",
+                "annotations": [
+                    {"segment": [0.0, 10.0], "label": "A"},
+                    {"segment": [20.0, 30.0], "label": "A"},
+                ],
+            },
+            "video_2": {
+                "subset": "validation",
+                "annotations": [
+                    {"segment": [0.0, 4.0], "label": "A"},
+                ],
+            },
+        }
+    }
+    pred = {
+        "results": {
+            "video_1": [
+                {"segment": [0.0, 10.0], "score": 0.9, "label": "A"},
+                {"segment": [19.0, 31.0], "score": 0.8, "label": "A"},
+                {"segment": [40.0, 50.0], "score": 0.7, "label": "A"},
+            ],
+            "video_2": [
+                {"segment": [0.0, 2.0], "score": 0.6, "label": "A"},
+            ],
+        }
+    }
+
+    summary, rows = analyzer.summarize_detection_quality(
+        gt,
+        pred,
+        subset="validation",
+        tiou_thresholds=(0.5, 0.7, 0.9),
+        topk_per_video=None,
+        label_aware=True,
+    )
+
+    assert summary["num_gt"] == 3
+    assert summary["num_predictions"] == 4
+    assert summary["recall@0.50"] == pytest.approx(1.0)
+    assert summary["recall@0.70"] == pytest.approx(2.0 / 3.0)
+    assert summary["recall@0.90"] == pytest.approx(1.0 / 3.0)
+    assert summary["best_iou_mean"] == pytest.approx((1.0 + (10.0 / 12.0) + 0.5) / 3.0)
+    assert summary["boundary_error_mean_p50"] == pytest.approx(0.1)
+
+    assert len(rows) == 3
+    assert rows[0]["video_id"] == "video_1"
+    assert rows[0]["best_iou"] == pytest.approx(1.0)
+    assert rows[1]["best_iou"] == pytest.approx(10.0 / 12.0)
+    assert rows[2]["length_bucket"] == "[4,8)"
+    assert summary["bucket:[4,8):recall@0.50"] == pytest.approx(1.0)
+
+
 def test_bridge_head_half_cell_scale_mode_on_linux():
     torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")
