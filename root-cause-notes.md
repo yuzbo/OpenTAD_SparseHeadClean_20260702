@@ -424,3 +424,23 @@ Reference snapshot:
   - It is CPU-only and runs `tools/analyze_detection_quality.py` over Stage-2 dense short/long outputs once `result_detection.json` exists.
   - Remote preflight passed: fail-closed config scan ok, `py_compile` ok, and current no-result state safely reports `analyzed=0 missing=4`.
 - Current next gate remains: wait for GPU1 to become free, let the Stage-2 short smoke run, then run the Stage-4 quality runner before deciding whether to submit Stage-2 dense long jobs through `sbatch`.
+
+## Runtime Fail-Closed and Stage-3 Audit Fixes - 2026-07-06
+
+- Commits `2af3344`, `9a3b080`, `fddd07d`, and `2962e8c` tighten the execution boundary after Linux/CPU audit exposed real contract bugs:
+  - `tools/train.py` and `tools/test.py` now run `tools.check_fail_closed_config.scan_config_object()` immediately after config load and `--cfg-options` merge, before importing torch/OpenTAD runtime modules and before DDP. A bad runtime shortcut config now fails before `LOCAL_RANK`/DDP access.
+  - `Collect` now preserves `irregular_gt_axis`, `irregular_proposal_axis`, `irregular_postprocess_axis`, `irregular_axis_contract`, and selected-axis GT drop counters in `metas`. Before this, `LoadFrames` wrote `postprocess_axis="native"` but the dataloader dropped it, so audits and runtime checks could fall back to `selected`.
+  - `dense_compat_mode="official_actionformer"` is now fail-closed: it requires a dense reference grid neck (`DensePassthroughFPNIdentity`, `IrregularFPNDenseAdapter`, or `IrregularFPNDenseAdapterNorm`). Native/GridAware bridge candidates are labeled `irregular_geometry_diagnostic_candidate`, not `dense_compatible_diagnostic_candidate`.
+  - `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py` now uses `IrregularFPNDenseAdapter` plus official dense prior semantics; the native shortgate remains GridAware and diagnostic-only.
+- Remote verification on synced commit `2962e8c`:
+  - Stage-2 dense selected-axis preflight passed with fail-closed scan, config load, `py_compile`, and runner-gate pytest; no training launched.
+  - Stage-3 selected/native preflight passed with fail-closed scan, config load, and `py_compile`.
+  - Stage-3 CPU one-batch assignment audit completed at `/data/run01/sczc063/yuzibo/OpenTAD_SparseHeadClean_20260702/logs/stage3_bridge_selected_native_short_audit/stage3_bridge_selected_native_short_audit_20260706_225125/`.
+    - selected-axis bridge control: `official_vs_current_assignment_diff.ok=True`, per-level positives `[2, 3, 6, 5, 2, 0]`, positive/class/encoded/decoded diffs all zero, target decode IoU exactly `1.0`.
+    - native-axis shortgate diagnostic: `official_vs_current_assignment_diff.ok=True`, per-level positives `[0, 0, 3, 3, 2, 1]`, positive/class/encoded/decoded diffs all zero, target decode IoU exactly `1.0`.
+- Interpretation:
+  - The earlier `absrange_expanded` collapse risk was not only mAP noise. It revealed two implementation/contract mistakes: axis metadata was not carried into `metas`, and official dense prior semantics were being mixed with GridAware interval-center grids.
+  - The selected-axis bridge control is now the cleaner bridge-vs-dense comparator. The native GridAware route remains a diagnostic irregular-geometry candidate and must not be used as dense-equivalent evidence.
+  - Full/long training remains blocked until Stage-2 dense selected-axis short smoke runs and the Stage-4 quality runner has a real `result_detection.json` to analyze.
+- Resource status:
+  - The Stage-2 GPU1 waiter is still safe: it sees `g0030/GPU1` busy (`step 1118197.669`, about `3959 MiB`) and continues sleeping without launching training.
