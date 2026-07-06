@@ -123,6 +123,7 @@ Reference snapshot:
     - `selected_axis_to_dense_axis` / `convert_to_seconds` needs a numeric no-double-conversion regression test, not just metadata/string checks.
     - BATA / diagnostic GT cache paths need validation/test fail-closed guards even if current configs do not enable them.
     - The Stage 2 "official dense selected-axis sanity" config is a current-repo sanity route, not proof of official OpenTAD parity until upstream source diff/hash and near-65 reproduction are established.
+  - Stage-FIX-D update: `LoadFrames` now fail-closes validation/test splits before reading diagnostic GT/cache shortcuts. The guard recognizes `subset`, `split`, and `data_split` values for `val`, `valid`, `validation`, `test`, and `testing`, and blocks BATA diagnostic GT cache / diagnostic-only aliases plus teacher or raw prediction cache shortcut flags if present. This protects future mAP credibility from eval-time leakage, but it is not evidence for the existing `65 -> 40/42` performance-collapse root cause because current configs did not enable these switches.
   - Updated experiment gate:
     - Run Linux config load, `py_compile`, pytest, and `python tools/verify_bridge_dense_equivalence.py --json` before any further training.
     - Run same-batch audits before long training, including assigned-positive target decode IoU and length-bucket GT coverage.

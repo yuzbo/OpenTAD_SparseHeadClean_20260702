@@ -1,7 +1,7 @@
 from pathlib import Path
 import importlib.util
 import sys
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -41,6 +41,87 @@ def load_frame_steps(cfg):
         split: next(step for step in getattr(cfg.dataset, split).pipeline if step.get("type") == "LoadFrames")
         for split in ("train", "val", "test")
     }
+
+
+def minimal_loadframes_results(split_key=None, split_value=None):
+    results = {
+        "total_frames": 16,
+        "resize_length": 4,
+        "duration": 16.0,
+        "video_name": "video_eval_guard",
+    }
+    if split_key is not None:
+        results[split_key] = split_value
+    return results
+
+
+def load_end_to_end_with_test_stubs():
+    class FakeTensor(list):
+        def bool(self):
+            return self
+
+    torch_stub = ModuleType("torch")
+    torch_stub.ones = lambda count: FakeTensor([1] * int(count))
+    torch_stub.zeros = lambda count: FakeTensor([0] * int(count))
+    torch_stub.cat = lambda tensors: FakeTensor([item for tensor in tensors for item in tensor])
+
+    torch_nn_stub = ModuleType("torch.nn")
+    torch_nn_functional_stub = ModuleType("torch.nn.functional")
+
+    package_stub = ModuleType("loadframes_guard_pkg")
+    package_stub.__path__ = []
+    transforms_stub = ModuleType("loadframes_guard_pkg.transforms")
+    transforms_stub.__path__ = []
+
+    builder_stub = ModuleType("loadframes_guard_pkg.builder")
+    builder_stub.PIPELINES = SimpleNamespace(register_module=lambda: (lambda cls: cls))
+
+    pseudo_boundary_stub = ModuleType("loadframes_guard_pkg.transforms.pseudo_boundary")
+    pseudo_boundary_stub.load_boundary_scores = lambda *args, **kwargs: None
+    pseudo_boundary_stub.select_pseudo_boundary_hybrid_positions = lambda *args, **kwargs: None
+    pseudo_boundary_stub.select_pseudo_boundary_snap_positions = lambda *args, **kwargs: None
+    pseudo_boundary_stub.slice_global_scores_for_window = lambda *args, **kwargs: None
+
+    boundary_acquisition_stub = ModuleType("loadframes_guard_pkg.transforms.boundary_acquisition")
+    boundary_acquisition_stub.BcaConfig = lambda **kwargs: SimpleNamespace(**kwargs)
+    boundary_acquisition_stub.load_bata_boundary_scores = lambda *args, **kwargs: (None, {})
+    boundary_acquisition_stub.select_bata_boundary_acquisition_positions = lambda *args, **kwargs: None
+    boundary_acquisition_stub.slice_global_scores_for_window = lambda *args, **kwargs: None
+    boundary_acquisition_stub.validate_bata_cache_manifest_for_loader = lambda *args, **kwargs: False
+
+    module_name = "loadframes_guard_pkg.transforms.end_to_end"
+    stub_modules = {
+        "torch": torch_stub,
+        "torch.nn": torch_nn_stub,
+        "torch.nn.functional": torch_nn_functional_stub,
+        "loadframes_guard_pkg": package_stub,
+        "loadframes_guard_pkg.transforms": transforms_stub,
+        "loadframes_guard_pkg.builder": builder_stub,
+        "loadframes_guard_pkg.transforms.pseudo_boundary": pseudo_boundary_stub,
+        "loadframes_guard_pkg.transforms.boundary_acquisition": boundary_acquisition_stub,
+        module_name: None,
+    }
+    previous_modules = {name: sys.modules.get(name) for name in stub_modules}
+    try:
+        for name, module in stub_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        spec = importlib.util.spec_from_file_location(
+            module_name,
+            ROOT / "opentad/datasets/transforms/end_to_end.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, module in previous_modules.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def test_adapter_native_dense_headv2_safe_config_and_launcher_contract():
@@ -1035,6 +1116,57 @@ def test_loadframes_records_explicit_axis_contract_metadata():
     assert 'results["irregular_proposal_axis"] = proposal_axis' in load_frames_impl
     assert 'results["irregular_postprocess_axis"] = postprocess_axis' in load_frames_impl
     assert 'results["irregular_axis_contract"]' in load_frames_impl
+
+
+@pytest.mark.parametrize(
+    ("split_key", "split_value"),
+    [
+        ("subset", "validation"),
+        ("split", "val"),
+        ("data_split", "testing"),
+        ("subset", "test"),
+    ],
+)
+def test_loadframes_forbids_bata_diagnostic_gt_cache_on_eval_splits(split_key, split_value):
+    end_to_end = load_end_to_end_with_test_stubs()
+    loader = end_to_end.LoadFrames(method="resize", bata_allow_diagnostic_gt_cache=True)
+
+    with pytest.raises(ValueError, match="bata_allow_diagnostic_gt_cache.*validation/test"):
+        loader(minimal_loadframes_results(split_key, split_value))
+
+
+@pytest.mark.parametrize("flag_name", ["bata_diagnostic_only", "diagnostic_only"])
+def test_loadframes_forbids_diagnostic_only_aliases_on_eval_splits(flag_name):
+    end_to_end = load_end_to_end_with_test_stubs()
+    loader = end_to_end.LoadFrames(method="resize")
+    setattr(loader, flag_name, True)
+
+    with pytest.raises(ValueError, match=f"{flag_name}.*validation/test"):
+        loader(minimal_loadframes_results("subset", "validation"))
+
+
+@pytest.mark.parametrize("split_key, split_value", [("subset", "train"), ("split", "training"), (None, None)])
+def test_loadframes_allows_diagnostic_research_switches_outside_eval_splits(split_key, split_value):
+    end_to_end = load_end_to_end_with_test_stubs()
+    loader = end_to_end.LoadFrames(
+        method="resize",
+        bata_allow_diagnostic_gt_cache=True,
+        bata_diagnostic_only=True,
+    )
+    loader.diagnostic_only = True
+
+    results = loader(minimal_loadframes_results(split_key, split_value))
+
+    assert results["num_clips"] == 1
+    assert len(results["frame_inds"]) == 4
+
+
+def test_current_configs_do_not_enable_bata_diagnostic_eval_shortcuts():
+    for config_path in (ROOT / "configs").rglob("*.py"):
+        text = config_path.read_text(encoding="utf-8")
+        assert "bata_allow_diagnostic_gt_cache=True" not in text
+        assert "bata_diagnostic_only=True" not in text
+        assert "diagnostic_only=True" not in text
 
 
 def test_loadframes_selected_axis_remap_does_not_create_tiny_collapsed_gt_targets():

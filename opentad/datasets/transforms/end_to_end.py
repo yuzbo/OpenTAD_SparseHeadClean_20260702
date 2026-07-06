@@ -34,6 +34,47 @@ def _stable_string_seed(value):
     return int.from_bytes(digest[:4], byteorder="little", signed=False)
 
 
+_EVAL_SPLIT_NAMES = frozenset(("val", "valid", "validation", "test", "testing", "eval", "evaluation"))
+_SPLIT_RESULT_KEYS = ("subset", "split", "data_split")
+_EVAL_DIAGNOSTIC_SHORTCUT_FLAGS = (
+    "bata_allow_diagnostic_gt_cache",
+    "bata_diagnostic_only",
+    "diagnostic_only",
+    "teacher_cache",
+    "use_teacher_cache",
+    "allow_teacher_cache",
+    "bata_teacher_cache",
+    "bata_use_teacher_cache",
+    "prediction_cache_shortcut",
+    "raw_prediction_shortcut",
+    "use_raw_prediction_shortcut",
+    "use_prediction_cache",
+    "allow_prediction_cache_shortcut",
+    "cache_shortcut",
+    "use_cache_shortcut",
+)
+
+
+def _normalise_split_name(value):
+    if value is None:
+        return None
+    return str(value).strip().lower()
+
+
+def _eval_split_marker(results):
+    for key in _SPLIT_RESULT_KEYS:
+        split_name = _normalise_split_name(results.get(key, None))
+        if split_name in _EVAL_SPLIT_NAMES:
+            return key, split_name
+    return None, None
+
+
+def _is_enabled_flag(value):
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off", "none")
+    return bool(value)
+
+
 @PIPELINES.register_module()
 class PrepareVideoInfo:
     def __init__(self, format="mp4", modality="RGB", prefix=""):
@@ -289,6 +330,18 @@ class LoadFrames:
         self.bata_config_hash = bata_config_hash
         self.fixed_trunc_start = fixed_trunc_start
         self.fixed_trunc_gt_index = fixed_trunc_gt_index
+
+    def _assert_no_eval_diagnostic_shortcuts(self, results):
+        split_key, split_name = _eval_split_marker(results)
+        if split_name is None:
+            return
+
+        for flag_name in _EVAL_DIAGNOSTIC_SHORTCUT_FLAGS:
+            if _is_enabled_flag(getattr(self, flag_name, False)):
+                raise ValueError(
+                    f"{flag_name}=True is forbidden for validation/test LoadFrames splits "
+                    f"({split_key}={split_name}); diagnostic GT/cache shortcuts must not affect mAP."
+                )
 
     def _apply_trunc_window(self, feats, st, ed, gt_segments, gt_labels, offset=0):
         feats = feats[st:ed]
@@ -768,6 +821,7 @@ class LoadFrames:
 
     def __call__(self, results):
         assert "total_frames" in results.keys(), "should have total_frames as a key"
+        self._assert_no_eval_diagnostic_shortcuts(results)
         total_frames = results["total_frames"]
         fps = results.get("avg_fps", results.get("fps", None))
 
