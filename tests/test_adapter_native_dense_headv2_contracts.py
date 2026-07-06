@@ -735,6 +735,34 @@ def test_loadframes_records_explicit_axis_contract_metadata():
     assert 'results["irregular_axis_contract"]' in load_frames_impl
 
 
+def test_loadframes_selected_axis_remap_does_not_create_tiny_collapsed_gt_targets():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+
+    assert "start + 1e-3" not in load_frames_impl
+    assert "dropped_selected_axis_gt_segments" in load_frames_impl
+
+
+def test_loadframes_selected_axis_remap_drops_collapsed_segments_on_linux():
+    import_torch_or_skip()
+    import numpy as np
+
+    end_to_end = pytest.importorskip("opentad.datasets.transforms.end_to_end")
+    loader = object.__new__(end_to_end.LoadFrames)
+
+    segments, labels = loader._remap_gt_to_selected_axis(
+        gt_segments=np.asarray([[12.0, 13.0], [0.0, 5.0]], dtype=np.float32),
+        gt_labels=np.asarray([7, 3], dtype=np.int32),
+        kept_positions=np.asarray([0, 5], dtype=np.int64),
+        valid_len=10,
+    )
+
+    assert segments.tolist() == [[0.0, 1.0]]
+    assert labels.tolist() == [3]
+    assert loader._last_dropped_selected_axis_gt_segments == [
+        dict(index=0, label=7, original_segment=[12.0, 13.0], mapped_segment=[2.0, 2.0])
+    ]
+
+
 def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dump_helper():
     detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
 

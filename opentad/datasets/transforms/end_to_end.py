@@ -631,6 +631,7 @@ class LoadFrames:
         return float(np.interp(coord, xp, fp))
 
     def _remap_gt_to_selected_axis(self, gt_segments, gt_labels, kept_positions, valid_len):
+        self._last_dropped_selected_axis_gt_segments = []
         if gt_segments is None or gt_labels is None or len(gt_segments) == 0 or kept_positions.size == 0:
             return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
@@ -643,7 +644,15 @@ class LoadFrames:
             start = float(np.clip(start, 0.0, max_coord))
             end = float(np.clip(end, 0.0, max_coord))
             if end <= start:
-                end = min(max_coord, start + 1e-3)
+                self._last_dropped_selected_axis_gt_segments.append(
+                    dict(
+                        index=int(idx),
+                        label=int(gt_labels[idx]),
+                        original_segment=[float(seg[0]), float(seg[1])],
+                        mapped_segment=[start, end],
+                    )
+                )
+                continue
             if end > start:
                 remapped_segments.append([start, end])
                 remapped_labels.append(int(gt_labels[idx]))
@@ -656,6 +665,9 @@ class LoadFrames:
         scale = float(max(self.scale_factor, 1))
         results["irregular_selected_positions"] = np.asarray(kept_positions, dtype=np.float32) / scale
         results["irregular_selected_valid_len"] = float(valid_len) / scale
+        results["dropped_selected_axis_gt_segments"] = list(
+            getattr(self, "_last_dropped_selected_axis_gt_segments", [])
+        )
         results["irregular_native_axis"] = bool(not self.remap_gt_to_selected_axis)
         gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"
         proposal_axis = gt_axis
