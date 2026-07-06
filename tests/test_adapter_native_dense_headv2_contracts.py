@@ -566,6 +566,38 @@ def test_loadframes_supports_deterministic_uniform_fixed_subsample_for_equal_int
     assert "self._uniform_pick_indices(np.arange(total_units), int(target_count))" in load_frames_impl
 
 
+def test_uniform_fixed_50pct_controls_keep_axis_contracts_and_only_change_sampling():
+    dense_uniform = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py"
+    )
+    bridge_uniform = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py"
+    )
+
+    assert dense_uniform.model.rpn_head.type == "ActionFormerHead"
+    assert dense_uniform.model.projection.type == "DensePassthroughConv1DTransformerProj"
+    assert dense_uniform.model.neck.type == "DensePassthroughFPNIdentity"
+    assert "input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4" in dense_uniform.work_dir
+
+    assert bridge_uniform.model.rpn_head.type == "IrregularActionFormerBridgeHead"
+    assert bridge_uniform.model.rpn_head.assignment_mode == "hard"
+    assert bridge_uniform.model.rpn_head.regression_mode == "symmetric_linear"
+    assert bridge_uniform.model.rpn_head.prior_generator.range_mode == "absolute"
+    assert bridge_uniform.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
+    assert bridge_uniform.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
+    assert "input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4" in bridge_uniform.work_dir
+
+    for step in load_frame_steps(dense_uniform).values():
+        assert step.method == "uniform_fixed_subsample"
+        assert abs(float(step.keep_ratio) - 0.5) < 1e-12
+        assert bool(step.remap_gt_to_selected_axis)
+
+    for step in load_frame_steps(bridge_uniform).values():
+        assert step.method == "uniform_fixed_subsample"
+        assert abs(float(step.keep_ratio) - 0.5) < 1e-12
+        assert not bool(step.remap_gt_to_selected_axis)
+
+
 def test_loadframes_records_explicit_axis_contract_metadata():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
