@@ -503,3 +503,4 @@ Reference snapshot:
   - It prints `can_submit_long_after_short`, `long_dense_sanity_pass`, and one compact line per target with `ok`, split, `avg_mAP`, prediction count, `recall@0.30`, and blocked reasons.
   - `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` now calls the gate with `--brief` while still writing the full JSON gate file.
 - Purpose: reduce manual parsing during half-hour monitoring and make the go/no-go state visible directly in Stage-4 logs.
+- Remote preflight on synced commit `df1d1c0` passed: full stage2 gate/static pytest and `RUN_TAG=stage4_gate_brief_preflight REQUIRE_RESULTS=0 bash remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`. The Stage-4 log now prints the brief summary before the full JSON payload.
