@@ -25,6 +25,13 @@ OFFICIAL_URLS = {
     "opentad/models/dense_heads/prior_generator/point_generator.py": "https://raw.githubusercontent.com/sming256/OpenTAD/main/opentad/models/dense_heads/prior_generator/point_generator.py",
     "opentad/models/necks/fpn.py": "https://raw.githubusercontent.com/sming256/OpenTAD/main/opentad/models/necks/fpn.py",
 }
+EXPECTED_SELECTED_AXIS_SANITY_CONFIG = (
+    "configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
+)
+
+
+class ConfigValidationError(ValueError):
+    pass
 
 
 def read_local(root: Path, rel_path: str) -> str:
@@ -52,6 +59,85 @@ def compare_file(local_root: Path, args: argparse.Namespace, rel_path: str) -> s
     return "".join(diff)
 
 
+def get_config_value(obj, key: str, default=None):
+    if hasattr(obj, "get"):
+        try:
+            return obj.get(key, default)
+        except TypeError:
+            pass
+    return getattr(obj, key, default)
+
+
+def require_equal(errors: list[str], name: str, actual, expected) -> None:
+    if actual != expected:
+        errors.append(f"{name}: expected {expected!r}, got {actual!r}")
+
+
+def require_true(errors: list[str], name: str, value) -> None:
+    if not bool(value):
+        errors.append(f"{name}: expected truthy, got {value!r}")
+
+
+def validate_official_dense_selected_axis_config(local_root: Path, config_path: Path) -> list[str]:
+    try:
+        from mmengine.config import Config
+    except Exception as exc:
+        raise ConfigValidationError(f"mmengine is required to load config: {exc}") from exc
+
+    resolved_config = config_path if config_path.is_absolute() else local_root / config_path
+    cfg = Config.fromfile(str(resolved_config))
+    errors: list[str] = []
+
+    require_equal(errors, "model.type", cfg.model.type, "IrregularActionFormer")
+    require_equal(
+        errors,
+        "model.projection.type",
+        cfg.model.projection.type,
+        "DensePassthroughConv1DTransformerProj",
+    )
+    require_equal(errors, "model.neck.type", cfg.model.neck.type, "DensePassthroughFPNIdentity")
+    require_equal(errors, "model.rpn_head.type", cfg.model.rpn_head.type, "ActionFormerHead")
+    require_equal(errors, "model.rpn_head.prior_generator.type", cfg.model.rpn_head.prior_generator.type, "PointGenerator")
+    require_true(errors, "post_processing.save_dict", get_config_value(cfg.post_processing, "save_dict", False))
+
+    forbidden_values = {
+        "model.rpn_head.type": {"IrregularActionFormerHeadV2", "IrregularActionFormerBridgeHead"},
+        "model.rpn_head.prior_generator.type": {"IrregularPointGeneratorV2"},
+        "model.projection.type": {"GridAwareConv1DTransformerProj", "IrregularConvTransformerProj"},
+        "model.neck.type": {"GridAwareFPNIdentity", "IrregularFPN"},
+    }
+    actual_values = {
+        "model.rpn_head.type": cfg.model.rpn_head.type,
+        "model.rpn_head.prior_generator.type": cfg.model.rpn_head.prior_generator.type,
+        "model.projection.type": cfg.model.projection.type,
+        "model.neck.type": cfg.model.neck.type,
+    }
+    for name, forbidden in forbidden_values.items():
+        if actual_values[name] in forbidden:
+            errors.append(f"{name}: forbidden native/sparse bridge component {actual_values[name]!r}")
+
+    for split in ("train", "val", "test"):
+        load_step = next(
+            (step for step in getattr(cfg.dataset, split).pipeline if step.get("type") == "LoadFrames"),
+            None,
+        )
+        if load_step is None:
+            errors.append(f"dataset.{split}.pipeline: missing LoadFrames")
+            continue
+        require_equal(errors, f"dataset.{split}.LoadFrames.method", load_step.method, "uniform_fixed_subsample")
+        require_equal(errors, f"dataset.{split}.LoadFrames.keep_ratio", float(load_step.keep_ratio), 0.5)
+        require_true(
+            errors,
+            f"dataset.{split}.LoadFrames.remap_gt_to_selected_axis",
+            load_step.remap_gt_to_selected_axis,
+        )
+
+    if "official_dense_selected_axis_sanity" not in cfg.work_dir:
+        errors.append(f"work_dir: expected official_dense_selected_axis_sanity marker, got {cfg.work_dir!r}")
+
+    return errors
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -73,23 +159,61 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Return non-zero when any reference file differs.",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "Optional config to validate as the official dense selected-axis sanity route. "
+            f"Default Stage-2 path is {EXPECTED_SELECTED_AXIS_SANITY_CONFIG}."
+        ),
+    )
+    parser.add_argument(
+        "--skip-reference-files",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Only run the config contract check; do not fetch or diff official dense reference files.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     local_root = args.local_root.resolve()
-    diffs = []
-    for rel_path in REFERENCE_FILES:
-        diff = compare_file(local_root, args, rel_path)
-        if diff:
-            diffs.append(diff)
+    if args.skip_reference_files and args.config is None:
+        print("--skip-reference-files requires --config", file=sys.stderr)
+        return 2
 
-    if not diffs:
+    config_errors = []
+    if args.config is not None:
+        try:
+            config_errors = validate_official_dense_selected_axis_config(local_root, args.config)
+        except ConfigValidationError as exc:
+            config_errors = [str(exc)]
+        if config_errors:
+            print("Official dense selected-axis sanity config failed validation:", file=sys.stderr)
+            for error in config_errors:
+                print(f"- {error}", file=sys.stderr)
+
+    diffs = []
+    if not args.skip_reference_files:
+        for rel_path in REFERENCE_FILES:
+            diff = compare_file(local_root, args, rel_path)
+            if diff:
+                diffs.append(diff)
+
+    if not diffs and not config_errors:
+        if args.config is not None:
+            print(f"Official dense selected-axis sanity config OK: {args.config}")
+        if args.skip_reference_files:
+            return 0
         print("Local dense reference files match upstream OpenTAD.")
         return 0
 
-    print("\n".join(diffs))
+    if diffs:
+        print("\n".join(diffs))
+    if config_errors:
+        return 1
     if args.fail_on_diff:
         print("Dense reference drift detected.", file=sys.stderr)
         return 1

@@ -217,3 +217,12 @@ Reference snapshot:
 - `opentad/models/dense_heads/irregular_actionformer_bridge_head.py`: existing hard/soft assignment knobs useful for the next dense-like ablation.
 - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_*_n16r4.py`: dense-like bridge and soft-label isolation configs.
 - `configs/adatad/thumos/input_random_fixed_50pct_adapter_*dense*_*n16r4.py`: route sanity cross-over configs.
+
+## Stage 2: OFFICIAL_DENSE_SELECTED_AXIS_SANITY (2026-07-06)
+
+- Added a named precheck-only sanity entry point:
+  - `configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py`
+  - This is a thin alias over the existing equal-interval dense control, preserving dense `ActionFormerHead`, official `PointGenerator`, `DensePassthroughConv1DTransformerProj`, `DensePassthroughFPNIdentity`, selected-axis GT/proposals, native post-processing, and `post_processing.save_dict=True`.
+- Added `remote_runs/precheck_official_dense_selected_axis_sanity_20260706.sh` as a fail-closed local/remote precheck. It only performs config contract validation, `py_compile`, and optional pytest via `RUN_PYTEST=1`; it does not launch training, Slurm, sync, or torchrun.
+- Enhanced `scripts/verify_official_dense_reference.py` with an explicit selected-axis dense sanity config validator while keeping the default upstream dense-reference diff behavior intact.
+- Interpretation limit: this proves the repository can load and precheck an equal-interval 50% selected-axis dense-head sanity route without accidentally selecting the native sparse/bridge head. It does not prove mAP recovery or attribute any remaining gap to projection, neck, head, assignment, or post-processing until a controlled training/evaluation run is launched separately.

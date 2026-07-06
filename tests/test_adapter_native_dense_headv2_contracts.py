@@ -976,6 +976,76 @@ def test_official_dense_reference_verifier_tracks_upstream_opentad_sources():
     assert "--official-root" in script
 
 
+def test_official_dense_selected_axis_sanity_config_loads_contract_with_mmengine():
+    cfg = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
+    )
+
+    head = cfg.model.rpn_head
+    load_steps = load_frame_steps(cfg)
+    assert cfg.model.type == "IrregularActionFormer"
+    assert cfg.model.projection.type == "DensePassthroughConv1DTransformerProj"
+    assert cfg.model.neck.type == "DensePassthroughFPNIdentity"
+    assert head.type == "ActionFormerHead"
+    assert head.prior_generator.type == "PointGenerator"
+    assert head.type not in {"IrregularActionFormerHeadV2", "IrregularActionFormerBridgeHead"}
+    assert head.prior_generator.type != "IrregularPointGeneratorV2"
+    assert bool(cfg.post_processing.save_dict)
+    assert "official_dense_selected_axis_sanity" in cfg.work_dir
+
+    for split, step in load_steps.items():
+        assert step.method == "uniform_fixed_subsample"
+        assert abs(float(step.keep_ratio) - 0.5) < 1e-12
+        assert bool(step.remap_gt_to_selected_axis), split
+    assert load_steps["train"].method_base == "random_trunc"
+    assert load_steps["val"].method_base == "sliding_window"
+    assert load_steps["test"].method_base == "sliding_window"
+
+
+def test_official_dense_selected_axis_sanity_uses_selected_proposals_native_postprocess():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+    detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
+
+    assert 'gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"' in load_frames_impl
+    assert "proposal_axis = gt_axis" in load_frames_impl
+    assert 'postprocess_axis = "native"' in load_frames_impl
+    assert "selected_axis_to_dense_axis" in detector_impl
+    assert "segments = self._segments_to_axis(" in detector_impl
+    assert detector_impl.index("segments = self._segments_to_axis(") < detector_impl.index("batched_nms(")
+
+
+def test_official_dense_selected_axis_precheck_is_fail_closed_and_non_training():
+    precheck = read("remote_runs/precheck_official_dense_selected_axis_sanity_20260706.sh")
+
+    assert "set -euo pipefail" in precheck
+    assert "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py" in precheck
+    assert "verify_official_dense_reference.py" in precheck
+    assert "PYTHON_BIN" in precheck
+    assert "for candidate in python python.exe python3" in precheck
+    assert "import mmengine.config" in precheck
+    assert "config load preflight" in precheck
+    assert "py_compile preflight" in precheck
+    assert "RUN_PYTEST" in precheck
+    assert "-m pytest tests/test_adapter_native_dense_headv2_contracts.py -q" in precheck
+    assert "torchrun" not in precheck
+    assert "tools/train.py" not in precheck
+    assert "srun" not in precheck
+
+
+def test_official_dense_reference_verifier_checks_selected_axis_sanity_config():
+    script = read("scripts/verify_official_dense_reference.py")
+
+    assert "validate_official_dense_selected_axis_config" in script
+    assert "--config" in script
+    assert "--skip-reference-files" in script
+    assert "ActionFormerHead" in script
+    assert "PointGenerator" in script
+    assert "DensePassthroughConv1DTransformerProj" in script
+    assert "DensePassthroughFPNIdentity" in script
+    assert "remap_gt_to_selected_axis" in script
+    assert "save_dict" in script
+
+
 def test_root_cause_notes_record_gt_axis_and_route_sanity_limits():
     notes = read("root-cause-notes.md")
 
