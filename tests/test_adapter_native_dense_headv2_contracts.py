@@ -763,6 +763,15 @@ def test_loadframes_selected_axis_remap_drops_collapsed_segments_on_linux():
     ]
 
 
+def test_random_fixed_path_records_dropped_selected_axis_gt_after_remap():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+    start = load_frames_impl.index("frame_idxs = dense_window[keep_positions]")
+    end = load_frames_impl.index("if len(frame_idxs) < frame_num:", start)
+    branch = load_frames_impl[start:end]
+
+    assert branch.index("_remap_gt_to_selected_axis(") < branch.index("_set_irregular_axis_meta(")
+
+
 def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dump_helper():
     detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
 

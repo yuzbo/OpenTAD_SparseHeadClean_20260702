@@ -1024,8 +1024,6 @@ class LoadFrames:
                 keep_positions = np.array([0], dtype=np.int64)
 
             frame_idxs = dense_window[keep_positions]
-            self._set_irregular_axis_meta(results, keep_positions, valid_len)
-
             if gt_segments is not None and gt_labels is not None:
                 if self.remap_gt_to_selected_axis:
                     gt_segments, gt_labels = self._remap_gt_to_selected_axis(
@@ -1034,8 +1032,13 @@ class LoadFrames:
                         kept_positions=keep_positions,
                         valid_len=valid_len,
                     )
+                else:
+                    self._last_dropped_selected_axis_gt_segments = []
                 results["gt_segments"] = gt_segments / self.scale_factor
                 results["gt_labels"] = gt_labels
+            else:
+                self._last_dropped_selected_axis_gt_segments = []
+            self._set_irregular_axis_meta(results, keep_positions, valid_len)
 
             if len(frame_idxs) < frame_num:
                 valid_mask_len = min(
