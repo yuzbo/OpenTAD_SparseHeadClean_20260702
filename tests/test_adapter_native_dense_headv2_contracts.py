@@ -503,6 +503,7 @@ def test_detection_quality_analyzer_uses_existing_gt_fallback_when_config_path_i
 def test_detection_quality_candidate_configs_save_result_detection_json():
     candidates = [
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py",
         "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py",
         "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
         "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py",
@@ -611,6 +612,91 @@ def test_selected_axis_control_precheck_launcher_is_fail_closed():
     assert "torchrun" not in launcher
     assert "sbatch" not in launcher
     assert "srun" not in launcher
+
+
+def test_absrange_expanded_shortgate_config_inherits_native_bounded_bridge_semantics():
+    long_cfg = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py"
+    )
+    short_cfg = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py"
+    )
+
+    long_head = long_cfg.model.rpn_head
+    short_head = short_cfg.model.rpn_head
+    long_prior = long_head.prior_generator
+    short_prior = short_head.prior_generator
+
+    assert short_cfg.model.projection.type == "GridAwareConv1DTransformerProj"
+    assert short_cfg.model.neck.type == "GridAwareFPNIdentity"
+    assert short_head.type == "IrregularActionFormerBridgeHead"
+    assert short_head.assignment_mode == "hard"
+    assert short_head.regression_mode == "symmetric_linear"
+    assert short_head.center_radius_scale == "point_radius"
+    assert short_head.reg_denom_mode == "left_right_mean"
+    assert short_prior.type == "IrregularPointGeneratorV2"
+    assert short_prior.range_mode == "absolute"
+    assert short_prior.decode_scale_mode == "level_stride"
+    assert short_prior.radius_scale_mode == "level_stride"
+    assert [tuple(item) for item in short_prior.regression_range] == [
+        (0, 8),
+        (2, 16),
+        (4, 32),
+        (8, 64),
+        (16, 128),
+        (32, 10000),
+    ]
+    assert [tuple(item) for item in short_prior.regression_range] == [
+        tuple(item) for item in long_prior.regression_range
+    ]
+    assert short_prior.range_mode == long_prior.range_mode
+    assert short_prior.range_mode != "open"
+    assert short_head.assignment_mode != "soft"
+    assert short_head.type != "ActionFormerHead"
+
+    for step in load_frame_steps(short_cfg).values():
+        assert step.method == "random_fixed_subsample"
+        assert abs(float(step.keep_ratio) - 0.5) < 1e-12
+        assert not bool(step.remap_gt_to_selected_axis)
+
+
+def test_absrange_expanded_shortgate_config_is_short_early_and_isolated():
+    cfg = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py"
+    )
+
+    assert int(cfg.scheduler.max_epoch) == 2
+    assert int(cfg.workflow.end_epoch) == 2
+    assert int(cfg.workflow.val_start_epoch) == 1
+    assert int(cfg.workflow.val_eval_interval) == 1
+    assert int(cfg.workflow.checkpoint_interval) == 1
+    assert bool(cfg.workflow.disable_checkpoint)
+    assert bool(cfg.post_processing.save_dict)
+    assert "shortgate" in cfg.work_dir
+    assert cfg.work_dir != "exps/thumos/adatad/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4"
+
+
+def test_absrange_expanded_shortgate_launcher_is_fail_closed_by_default():
+    runner = read("remote_runs/run_bridge_absrange_expanded_shortgate_failclosed_20260706.sh")
+
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py" in runner
+    assert 'PRECHECK_ONLY="${PRECHECK_ONLY:-1}"' in runner
+    assert 'RUN_TRAIN="${RUN_TRAIN:-0}"' in runner
+    assert 'PYTHON_BIN="${PYTHON_BIN:-}"' in runner
+    assert "_python_works()" in runner
+    assert "command -v python.exe" in runner
+    assert "command -v python3" in runner
+    assert "config load preflight" in runner
+    assert "py_compile preflight" in runner
+    assert "pytest preflight" in runner
+    assert "RUN_TRAIN=1" in runner
+    assert "PRECHECK_ONLY=0" in runner
+    assert "torchrun" in runner
+    assert "DRY_RUN_TRAIN_CMD" in runner
+    assert "ssh" not in runner
+    assert "scp" not in runner
+    assert "sbatch" not in runner
+    assert "srun" not in runner
 
 
 def test_bridge_head_half_cell_scale_mode_on_linux():

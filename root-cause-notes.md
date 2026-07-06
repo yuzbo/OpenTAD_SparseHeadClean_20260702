@@ -255,3 +255,9 @@ Reference snapshot:
   - `remote_runs/precheck_selected_axis_control_matrix_20260706.sh`
   - `remote_runs/launch_selected_axis_control_precheck_20260706.sh`
   These scripts only load configs, run `py_compile`, and run the local pytest contract. They do not launch training or Slurm.
+
+## Stage 5 Native Absrange-Expanded Short Gate - 2026-07-06
+
+- Added `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py` as a short diagnostic gate over the native-axis random-fixed bridge hard linear `absrange_expanded` route. It preserves bounded expanded absolute ranges, level-stride decode/radius fields, `center_radius_scale="point_radius"`, `reg_denom_mode="left_right_mean"`, and `post_processing.save_dict=True`, while cutting the schedule to 2 epochs with validation from epoch 1 in a separate `shortgate` work directory.
+- Added `remote_runs/run_bridge_absrange_expanded_shortgate_failclosed_20260706.sh` as a fail-closed helper. By default it performs config load, `py_compile`, and focused pytest checks only. It prints a train command only when `RUN_TRAIN=1`, and executes it only when both `RUN_TRAIN=1` and `PRECHECK_ONLY=0` are set.
+- This gate must not be used as a metric claim. Any long-run decision still depends on the audit/decode-IoU checks, official dense sanity, selected/native-axis controls, postprocess/NMS axis sanity, and bridge-equivalence evidence.
