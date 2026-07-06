@@ -15,6 +15,8 @@ Important comparison boundary: the dense control family uses selected-axis GT (`
 
 Official-OpenTAD review boundary absorbed on 2026-07-06: the authority for dense AdaTAD / ActionFormer behavior must be the upstream OpenTAD implementation, not the dense code copied into this working repository. The external review in `pro-review-official-opentad-20260706.md` treats the current route as partially implemented but not contract-equivalent to official dense AdaTAD. It also reframes the largest performance gap: if the equal-interval 50% baseline is around `Average-mAP ~= 65`, then the current `40-42` results are a route-level collapse, not a small head regression. Equal-interval 50% remains close to a uniform dense grid, while random-fixed native-axis sparse detection changes the observation geometry and the supervision coordinate system at the same time.
 
+Monitoring-collapse review boundary absorbed on 2026-07-06: the external response in `pro-review-monitoring-collapse-20260706.md` is stricter than the earlier review and explicitly rejects explaining `65 -> 40/42` as natural random 50% sparse degradation. It was based on GitHub source/raw review of commit `d7da39315f80405253bf705997d7c26e63c66ab0` plus upstream OpenTAD static review, not a local clone or training run, so every code claim must be rechecked against current HEAD. Its active checklist is: split supervision/decode/postprocess axes, verify whether NMS is performed on comparable native/seconds coordinates before suppression, revisit full-gap versus half-cell temporal-grid semantics, stop treating positive coverage alone as proof of high-IoU correctness, and gate `absrange_expanded` with stronger audit/short-run evidence before interpreting long-run results.
+
 Reference snapshot:
 
 | Experiment | Status | Avg mAP | Notes |
@@ -91,6 +93,22 @@ Reference snapshot:
   - Promote official dense parity and selected-axis / native-axis sanity checks ahead of further long training.
   - Add or run controls for `equal_interval_50pct + current bridge/head`, `random_fixed + selected-axis/remap=True + official dense head`, and `random_fixed native + bridge hard + corrected scale-separated prior`.
   - Extend audits beyond positive counts to include proposal coordinate sanity, range-fail/center-fail decomposition, and high-IoU error distribution.
+
+- 2026-07-06 monitoring-collapse review absorbed:
+  - Full response recorded at `pro-review-monitoring-collapse-20260706.md` with source attachment SHA256 `9e43544dc36f49cf4d181c0b94f7fdffdc7e43239b4836b48086bfb5f79fca11`.
+  - Treat `65 -> 40/42` as a likely contract failure until disproved, not as an acceptable cost of random 50% sampling.
+  - Review claims to verify against current HEAD before further implementation claims:
+    - `LoadFrames` / detector metadata must be able to express different GT, proposal, and postprocess axes. Selected-axis supervision should not force selected-axis NMS/eval.
+    - Post-processing should run NMS on comparable native or seconds coordinates when proposals are decoded in selected coordinates.
+    - `cell_left` / `cell_right` semantics need a clear decision: current full-neighbor-gap support versus a Voronoi half-cell support. This decision affects range scale, radius scale, regression denominator, downsampling, and high-IoU boundary calibration.
+    - `_remap_gt_to_selected_axis` should not silently turn collapsed GTs into tiny `1e-3` segments without an ignore/visibility contract.
+    - `random_fixed_subsample` should have an explicit branch and tests, so the central route cannot depend on hidden fallback behavior.
+  - Audit extension required before treating any same-batch result as evidence of correctness:
+    - record assigned-positive decode IoU against assigned GT;
+    - record proposal-axis-to-native/seconds IoU;
+    - record NMS-before/after high-IoU recall;
+    - keep per-level positives and GT coverage as necessary but insufficient signals.
+  - Experiment-order constraint: run official dense selected-axis sanity and bridge dense-equivalence sanity before making strong native-axis irregular-head claims. `absrange_expanded` is a short-run, gated candidate, not a proof of route correctness by itself.
 
 - 2026-07-05 implementation update:
   - Added `center_radius_scale` and `reg_denom_mode` knobs to `IrregularActionFormerBridgeHead`.
