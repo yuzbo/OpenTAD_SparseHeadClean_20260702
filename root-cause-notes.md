@@ -495,3 +495,4 @@ Reference snapshot:
   - Stage-4 quality summary with `num_predictions >= 1`;
   - Stage-4 quality summary with `recall@0.30 >= 1e-6`.
 - These are intentionally minimal sanity checks, not near63/near65 performance claims. They block empty-prediction or coordinate-broken short runs from authorizing long Slurm jobs while still allowing low early mAP to be inspected instead of overfitting the gate to two-epoch performance.
+- Remote preflight on synced commit `1f0970a` passed: `py_compile`, `pytest tests/test_stage2_dense_gate_summary.py -q`, and `RUN_TAG=stage4_gate_min_quality_preflight REQUIRE_RESULTS=0 bash remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`. With no Stage-2 outputs yet, the gate remains blocked and now records `missing_average_mAP` in addition to missing artifacts.
