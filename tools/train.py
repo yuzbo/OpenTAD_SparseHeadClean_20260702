@@ -7,25 +7,21 @@ if path not in sys.path:
     sys.path.insert(0, path)
 
 import argparse
-import torch
-import torch.distributed as dist
-from torch.distributed.algorithms.ddp_comm_hooks import default as comm_hooks
-from torch.nn.parallel import DistributedDataParallel
-from torch.cuda.amp import GradScaler
+import json
 from mmengine.config import Config, DictAction
-from opentad.models import build_detector
-from opentad.datasets import build_dataset, build_dataloader
-from opentad.cores import train_one_epoch, val_one_epoch, eval_one_epoch, build_optimizer, build_scheduler
-from opentad.utils import (
-    set_seed,
-    update_workdir,
-    create_folder,
-    save_config,
-    setup_logger,
-    ModelEma,
-    save_checkpoint,
-    save_best_checkpoint,
-)
+
+
+def enforce_fail_closed_config(cfg, config_path):
+    from tools.check_fail_closed_config import scan_config_object
+
+    violations = scan_config_object(cfg)
+    if not violations:
+        return
+    for violation in violations:
+        violation["config"] = str(config_path)
+    report = {"ok": False, "violations": violations}
+    print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
+    raise SystemExit("Fail-closed config check failed before training.")
 
 
 def parse_args():
@@ -48,6 +44,27 @@ def main():
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    enforce_fail_closed_config(cfg, args.config)
+
+    import torch
+    import torch.distributed as dist
+    from torch.cuda.amp import GradScaler
+    from torch.distributed.algorithms.ddp_comm_hooks import default as comm_hooks
+    from torch.nn.parallel import DistributedDataParallel
+
+    from opentad.cores import build_optimizer, build_scheduler, eval_one_epoch, train_one_epoch, val_one_epoch
+    from opentad.datasets import build_dataloader, build_dataset
+    from opentad.models import build_detector
+    from opentad.utils import (
+        ModelEma,
+        create_folder,
+        save_best_checkpoint,
+        save_checkpoint,
+        save_config,
+        set_seed,
+        setup_logger,
+        update_workdir,
+    )
 
     # DDP init
     args.local_rank = int(os.environ["LOCAL_RANK"])

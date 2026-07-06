@@ -1,5 +1,7 @@
 import ast
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -228,3 +230,47 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
     assert "tools/train.py" not in runner
     assert "srun --jobid=1118197" not in runner
     assert "CUDA_VISIBLE_DEVICES" not in runner
+
+
+def test_train_and_test_entrypoints_run_fail_closed_scan_after_cfg_options():
+    for entrypoint, failure_text in (
+        ("tools/train.py", "before training"),
+        ("tools/test.py", "before testing"),
+    ):
+        source = (ROOT / entrypoint).read_text(encoding="utf-8")
+        assert "from tools.check_fail_closed_config import scan_config_object" in source
+        assert "violations = scan_config_object(cfg)" in source
+        assert failure_text in source
+        merge_pos = source.index("cfg.merge_from_dict(args.cfg_options)")
+        scan_pos = source.index("enforce_fail_closed_config(cfg, args.config)")
+        torch_pos = source.index("import torch")
+        opentad_pos = source.index("from opentad.models import build_detector")
+        ddp_pos = source.index("# DDP init")
+        assert merge_pos < scan_pos < torch_pos < ddp_pos, entrypoint
+        assert scan_pos < opentad_pos < ddp_pos, entrypoint
+
+
+def test_train_and_test_entrypoints_fail_before_ddp_on_blocked_runtime_config(tmp_path):
+    bad_config = tmp_path / "bad_runtime_shortcut.py"
+    bad_config.write_text(
+        "inference = dict(load_from_raw_predictions=True, fuse_list=['cached.json'])\n",
+        encoding="utf-8",
+    )
+
+    for entrypoint, failure_text in (
+        ("tools/train.py", "before training"),
+        ("tools/test.py", "before testing"),
+    ):
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / entrypoint), str(bad_config)],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        output = completed.stdout + completed.stderr
+        assert completed.returncode != 0
+        assert "load_from_raw_predictions" in output
+        assert failure_text in output
+        assert "LOCAL_RANK" not in output

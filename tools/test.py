@@ -7,14 +7,21 @@ if path not in sys.path:
     sys.path.insert(0, path)
 
 import argparse
-import torch
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
+import json
 from mmengine.config import Config, DictAction
-from opentad.models import build_detector
-from opentad.datasets import build_dataset, build_dataloader
-from opentad.cores import eval_one_epoch
-from opentad.utils import update_workdir, set_seed, create_folder, setup_logger
+
+
+def enforce_fail_closed_config(cfg, config_path):
+    from tools.check_fail_closed_config import scan_config_object
+
+    violations = scan_config_object(cfg)
+    if not violations:
+        return
+    for violation in violations:
+        violation["config"] = str(config_path)
+    report = {"ok": False, "violations": violations}
+    print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
+    raise SystemExit("Fail-closed config check failed before testing.")
 
 
 def parse_args():
@@ -36,6 +43,16 @@ def main():
     cfg = Config.fromfile(args.config)
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    enforce_fail_closed_config(cfg, args.config)
+
+    import torch
+    import torch.distributed as dist
+    from torch.nn.parallel import DistributedDataParallel
+
+    from opentad.cores import eval_one_epoch
+    from opentad.datasets import build_dataloader, build_dataset
+    from opentad.models import build_detector
+    from opentad.utils import create_folder, set_seed, setup_logger, update_workdir
 
     # DDP init
     args.local_rank = int(os.environ["LOCAL_RANK"])
