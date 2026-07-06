@@ -476,3 +476,4 @@ Reference snapshot:
   - whether long dense sanity is close enough to the expected near63/near65 band;
   - whether missing result/quality files or hard errors block interpretation.
 - Local dry run without Stage-2 outputs correctly reports all four Stage-2 targets blocked by missing artifacts and `can_submit_long_after_short=false`.
+- Remote preflight on synced commit `b6c14cd` passed: `py_compile`, `pytest tests/test_stage2_dense_gate_summary.py tests/test_fail_closed_static_gates.py -q`, and `RUN_TAG=stage4_gate_preflight_manual REQUIRE_RESULTS=0 bash remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`. With no Stage-2 outputs yet, the remote gate correctly reports all four targets blocked by missing artifacts and writes `logs/stage4_detection_quality_stage2_dense/stage4_gate_preflight_manual_stage2_dense_gate.json`.
