@@ -139,7 +139,7 @@ Reference snapshot:
   - Added a conservative waiter for the next long run:
     - `remote_runs/watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh`
     - `remote_runs/launch_watch_gpu1_bridge_absrange_expanded_20260706.sh`
-    The waiter only polls for the old step `1118197.621` to disappear, exits if the target already has output/logs, and then calls the existing `launch_gpu1_bridge_absrange_expanded_long_20260706.sh`. It does not start training directly and is intended to avoid racing the current GPU1 job.
+    The waiter only polls for the old step `1118197.621` to disappear, exits if the target already has output/logs, and then calls the existing `launch_gpu1_bridge_absrange_expanded_long_20260706.sh`. It does not start training directly and is intended to avoid racing the current GPU1 job. The launcher also refuses to start a duplicate waiter if one is already running.
   - Added equal-interval 50% sanity configs to separate the claimed `~65` equal-interval baseline from random-fixed native sparse failure:
     - `configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py`: dense `ActionFormerHead`, selected-axis GT, deterministic uniform 50% input. This is the fair current-repo counterpart for the equal-interval dense-control claim.
     - `configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`: current bridge hard + `absrange_expanded`, native-axis GT, deterministic uniform 50% input. This tests whether the corrected sparse bridge route still collapses when the sampling grid is regular.

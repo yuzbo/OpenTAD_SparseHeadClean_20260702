@@ -647,6 +647,8 @@ def test_absrange_expanded_waiter_only_launches_after_old_gpu1_step_clears():
     assert "nohup bash" in launcher
     assert "watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh" in launcher
     assert "logs/gpu1_bridge_absrange_expanded_waiter" in launcher
+    assert "pgrep -f" in launcher
+    assert "waiter already running" in launcher
 
 
 def test_loadframes_records_explicit_axis_contract_metadata():
