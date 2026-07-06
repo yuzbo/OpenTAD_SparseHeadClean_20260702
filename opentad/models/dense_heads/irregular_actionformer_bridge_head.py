@@ -37,8 +37,9 @@ class IrregularActionFormerBridgeHead(nn.Module):
         soft_reg_weight_mode="soft",
         soft_cls_target_mode="soft",
         reg_denom_floor=0.5,
-        center_radius_scale="full_cell_span",
-        reg_denom_mode="full_cell_span",
+        center_radius_scale="point_radius",
+        reg_denom_mode="left_right_mean",
+        allow_legacy_full_cell_span=False,
         filter_similar_gt=True,
         cls_loss_weight=1.0,
         reg_loss_weight=None,
@@ -71,6 +72,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         self.reg_denom_floor = reg_denom_floor
         self.center_radius_scale = center_radius_scale
         self.reg_denom_mode = reg_denom_mode
+        self.allow_legacy_full_cell_span = bool(allow_legacy_full_cell_span)
         self.filter_similar_gt = filter_similar_gt
         self.cls_loss_weight = cls_loss_weight
         self.reg_loss_weight = reg_loss_weight
@@ -103,6 +105,15 @@ class IrregularActionFormerBridgeHead(nn.Module):
             raise ValueError(f"Unsupported center_radius_scale: {self.center_radius_scale}")
         if self.reg_denom_mode not in scale_base_modes:
             raise ValueError(f"Unsupported reg_denom_mode: {self.reg_denom_mode}")
+        uses_legacy_full_cell_span = (
+            self.center_radius_scale == "full_cell_span" or self.reg_denom_mode == "full_cell_span"
+        )
+        if uses_legacy_full_cell_span and not self.allow_legacy_full_cell_span:
+            raise ValueError(
+                "Legacy full-cell-span bridge scales require allow_legacy_full_cell_span=True. "
+                "Use center_radius_scale='point_radius' and reg_denom_mode='left_right_mean' "
+                "for the official-compatible bridge scale contract."
+            )
         if self.tower_kernel_size <= 0 or self.tower_kernel_size % 2 == 0:
             raise ValueError(f"tower_kernel_size must be a positive odd integer, got {self.tower_kernel_size}")
         if self.predictor_kernel_size <= 0 or self.predictor_kernel_size % 2 == 0:

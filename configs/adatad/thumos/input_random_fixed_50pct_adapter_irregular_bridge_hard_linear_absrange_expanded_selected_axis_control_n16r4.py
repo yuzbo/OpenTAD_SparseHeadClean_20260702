@@ -1,5 +1,13 @@
 _base_ = ["./input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py"]
 
+model = dict(
+    rpn_head=dict(
+        center_radius_scale="point_radius",
+        reg_denom_mode="left_right_mean",
+        allow_legacy_full_cell_span=False,
+    )
+)
+
 dataset = dict(
     train=dict(
         pipeline=[

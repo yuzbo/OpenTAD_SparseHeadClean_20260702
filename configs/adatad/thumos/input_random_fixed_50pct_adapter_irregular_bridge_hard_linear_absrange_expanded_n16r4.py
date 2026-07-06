@@ -4,6 +4,7 @@ model = dict(
     rpn_head=dict(
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
+        allow_legacy_full_cell_span=False,
         prior_generator=dict(
             range_mode="absolute",
             regression_range=[(0, 8), (2, 16), (4, 32), (8, 64), (16, 128), (32, 10000)],

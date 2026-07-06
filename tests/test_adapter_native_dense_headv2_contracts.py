@@ -240,14 +240,19 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
 
     assert hard_linear.model.rpn_head.assignment_mode == "hard"
     assert hard_linear.model.rpn_head.regression_mode == "symmetric_linear"
+    assert hard_linear.model.rpn_head.center_radius_scale == "full_cell_span"
+    assert hard_linear.model.rpn_head.reg_denom_mode == "full_cell_span"
+    assert hard_linear.model.rpn_head.allow_legacy_full_cell_span is True
     assert "hard_linear_n16r4" in hard_linear.work_dir
 
     assert hard_log.model.rpn_head.assignment_mode == "hard"
     assert hard_log.model.rpn_head.regression_mode == "asymmetric_log1p"
+    assert hard_log.model.rpn_head.allow_legacy_full_cell_span is True
     assert "hard_log_n16r4" in hard_log.work_dir
 
     assert soft_topk1.model.rpn_head.assignment_mode == "soft"
     assert soft_topk1.model.rpn_head.regression_mode == "symmetric_linear"
+    assert soft_topk1.model.rpn_head.allow_legacy_full_cell_span is True
     assert int(soft_topk1.model.rpn_head.soft_assign_topk) == 1
     assert soft_topk1.model.rpn_head.soft_reg_weight_mode == "binary"
     assert soft_topk1.model.rpn_head.soft_cls_target_mode == "binary"
@@ -256,12 +261,18 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
 
     assert openrange.model.rpn_head.assignment_mode == "hard"
     assert openrange.model.rpn_head.regression_mode == "symmetric_linear"
+    assert openrange.model.rpn_head.center_radius_scale == "full_cell_span"
+    assert openrange.model.rpn_head.reg_denom_mode == "full_cell_span"
+    assert openrange.model.rpn_head.allow_legacy_full_cell_span is True
     assert openrange.model.rpn_head.prior_generator.range_mode == "open"
     assert all(tuple(item) == (0, 10000) for item in openrange.model.rpn_head.prior_generator.regression_range)
     assert "hard_linear_openrange_n16r4" in openrange.work_dir
 
     assert absrange.model.rpn_head.assignment_mode == "hard"
     assert absrange.model.rpn_head.regression_mode == "symmetric_linear"
+    assert absrange.model.rpn_head.center_radius_scale == "full_cell_span"
+    assert absrange.model.rpn_head.reg_denom_mode == "full_cell_span"
+    assert absrange.model.rpn_head.allow_legacy_full_cell_span is True
     assert absrange.model.rpn_head.prior_generator.range_mode == "absolute"
     assert tuple(absrange.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
     assert "hard_linear_absrange_n16r4" in absrange.work_dir
@@ -270,6 +281,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_radiuslevel.model.rpn_head.regression_mode == "symmetric_linear"
     assert absrange_radiuslevel.model.rpn_head.center_radius_scale == "point_radius"
     assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "left_right_mean"
+    assert absrange_radiuslevel.model.rpn_head.allow_legacy_full_cell_span is False
     assert absrange_radiuslevel.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -280,6 +292,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert levelstride.model.rpn_head.regression_mode == "symmetric_linear"
     assert levelstride.model.rpn_head.center_radius_scale == "point_radius"
     assert levelstride.model.rpn_head.reg_denom_mode == "left_right_mean"
+    assert levelstride.model.rpn_head.allow_legacy_full_cell_span is False
     assert levelstride.model.rpn_head.prior_generator.range_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -289,6 +302,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_expanded.model.rpn_head.regression_mode == "symmetric_linear"
     assert absrange_expanded.model.rpn_head.center_radius_scale == "point_radius"
     assert absrange_expanded.model.rpn_head.reg_denom_mode == "left_right_mean"
+    assert absrange_expanded.model.rpn_head.allow_legacy_full_cell_span is False
     assert absrange_expanded.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_expanded.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_expanded.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -306,8 +320,10 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
 def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
     bridge_impl = read("opentad/models/dense_heads/irregular_actionformer_bridge_head.py")
 
-    assert "center_radius_scale=\"full_cell_span\"" in bridge_impl
-    assert "reg_denom_mode=\"full_cell_span\"" in bridge_impl
+    assert "center_radius_scale=\"point_radius\"" in bridge_impl
+    assert "reg_denom_mode=\"left_right_mean\"" in bridge_impl
+    assert "allow_legacy_full_cell_span=False" in bridge_impl
+    assert "Legacy full-cell-span bridge scales require allow_legacy_full_cell_span=True" in bridge_impl
     assert "def _scale_base(" in bridge_impl
     assert "def _point_fields_extended(" in bridge_impl
     assert 'mode == "full_cell_span"' in bridge_impl
@@ -316,6 +332,22 @@ def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
     assert 'mode == "left_right_mean"' in bridge_impl
     assert 'mode == "point_range"' in bridge_impl
     assert 'mode == "point_radius"' in bridge_impl
+
+
+def test_bridge_corrected_derivative_configs_clear_legacy_scale_opt_in():
+    shortgate = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py"
+    )
+    selected_axis = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py"
+    )
+
+    for cfg in (shortgate, selected_axis):
+        head = cfg.model.rpn_head
+        assert head.type == "IrregularActionFormerBridgeHead"
+        assert head.center_radius_scale == "point_radius"
+        assert head.reg_denom_mode == "left_right_mean"
+        assert head.allow_legacy_full_cell_span is False
 
 
 def test_sparse_head_assignment_audit_tool_contract():
@@ -737,6 +769,47 @@ def test_bridge_head_half_cell_scale_mode_on_linux():
         point_scale,
     )
     assert torch.allclose(encoded, torch.tensor([[1.0, 2.0], [1.0, 2.0]]))
+
+
+def test_bridge_head_default_and_legacy_scale_contract_on_linux():
+    import_torch_or_skip()
+    mmengine_config = pytest.importorskip("mmengine.config")
+    bridge_head = pytest.importorskip("opentad.models.dense_heads.irregular_actionformer_bridge_head")
+    config_dict = mmengine_config.ConfigDict
+
+    base_kwargs = dict(
+        num_classes=20,
+        in_channels=512,
+        feat_channels=512,
+        num_convs=1,
+        prior_generator=config_dict(
+            type="IrregularPointGeneratorV2",
+            strides=[1],
+            regression_range=[(0, 4)],
+            range_mode="absolute",
+        ),
+        loss=config_dict(cls_loss=dict(type="FocalLoss"), reg_loss=dict(type="DIOULoss")),
+    )
+
+    default_head = bridge_head.IrregularActionFormerBridgeHead(**base_kwargs)
+    assert default_head.center_radius_scale == "point_radius"
+    assert default_head.reg_denom_mode == "left_right_mean"
+    assert default_head.allow_legacy_full_cell_span is False
+
+    with pytest.raises(ValueError, match="allow_legacy_full_cell_span=True"):
+        bridge_head.IrregularActionFormerBridgeHead(
+            **base_kwargs,
+            center_radius_scale="full_cell_span",
+            reg_denom_mode="full_cell_span",
+        )
+
+    legacy_head = bridge_head.IrregularActionFormerBridgeHead(
+        **base_kwargs,
+        center_radius_scale="full_cell_span",
+        reg_denom_mode="full_cell_span",
+        allow_legacy_full_cell_span=True,
+    )
+    assert legacy_head.allow_legacy_full_cell_span is True
 
 
 def test_bridge_hard_uniform_grid_matches_official_dense_target_contract_on_linux():

@@ -4,6 +4,7 @@ model = dict(
     rpn_head=dict(
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
+        allow_legacy_full_cell_span=False,
         prior_generator=dict(
             decode_scale_mode="level_stride",
             radius_scale_mode="level_stride",
