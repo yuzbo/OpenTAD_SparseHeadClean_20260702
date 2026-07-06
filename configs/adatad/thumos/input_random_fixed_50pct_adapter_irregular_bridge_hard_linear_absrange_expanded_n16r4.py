@@ -8,13 +8,12 @@ model = dict(
         allow_center_fallback_inside_gt=False,
         route_contract=dict(
             route_label="SPARSE_HEAD_WARN_REVIEW_FIXES_DIAGNOSTIC_ONLY",
-            compatibility="dense_compatible_diagnostic_candidate",
+            compatibility="irregular_geometry_diagnostic_candidate",
             dense_equivalent_claim_allowed=False,
             allow_legacy_full_cell_span=False,
             allow_center_fallback_inside_gt=False,
         ),
         prior_generator=dict(
-            dense_compat_mode="official_actionformer",
             range_mode="absolute",
             regression_range=[(0, 8), (2, 16), (4, 32), (8, 64), (16, 128), (32, 10000)],
             decode_scale_mode="level_stride",

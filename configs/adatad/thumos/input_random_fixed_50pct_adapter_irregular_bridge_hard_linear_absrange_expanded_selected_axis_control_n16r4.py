@@ -1,6 +1,11 @@
 _base_ = ["./input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py"]
 
 model = dict(
+    neck=dict(
+        type="IrregularFPNDenseAdapter",
+        strides=[1, 2, 4, 8, 16, 32],
+        no_interp=False,
+    ),
     rpn_head=dict(
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
@@ -17,6 +22,13 @@ model = dict(
                 proposal_axis="selected",
                 postprocess_axis="native",
             ),
+        ),
+        prior_generator=dict(
+            dense_compat_mode="official_actionformer",
+            range_mode="absolute",
+            regression_range=[(0, 8), (2, 16), (4, 32), (8, 64), (16, 128), (32, 10000)],
+            decode_scale_mode="level_stride",
+            radius_scale_mode="level_stride",
         ),
     )
 )

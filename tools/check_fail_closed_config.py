@@ -28,6 +28,12 @@ BLOCKED_KEY_PATTERNS = (
 
 LEGACY_COMPATIBILITY = "legacy_ablation_only"
 CORRECTED_COMPATIBILITY = "dense_compatible_diagnostic_candidate"
+IRREGULAR_COMPATIBILITY = "irregular_geometry_diagnostic_candidate"
+DENSE_COMPAT_NECK_TYPES = {
+    "DensePassthroughFPNIdentity",
+    "IrregularFPNDenseAdapter",
+    "IrregularFPNDenseAdapterNorm",
+}
 
 
 def _plain_value(value):
@@ -64,6 +70,7 @@ def scan_config_object(obj, path="cfg"):
 
     items = _iter_items(obj)
     if items is not None:
+        violations.extend(scan_dense_compat_model_object(obj, path))
         violations.extend(scan_route_contract_object(obj, path))
         violations.extend(scan_loadframes_contract_object(obj, path))
         for key, value in items:
@@ -118,8 +125,42 @@ def _has_audited_hard_compatible_marker(obj, contract):
     )
 
 
+def _prior_generator(obj):
+    prior = _dict_get(obj, "prior_generator", {})
+    return prior if isinstance(prior, dict) else {}
+
+
+def _uses_official_dense_compat_prior(obj):
+    return _dict_get(_prior_generator(obj), "dense_compat_mode") == "official_actionformer"
+
+
 def _violation(path, key, value, reason):
     return {"path": f"{path}.{key}", "key": key, "value": repr(_plain_value(value)), "reason": reason}
+
+
+def scan_dense_compat_model_object(obj, path):
+    obj = _plain_value(obj)
+    if not isinstance(obj, dict) or "rpn_head" not in obj:
+        return []
+
+    head = _dict_get(obj, "rpn_head", {})
+    if not _is_bridge_head_like(head) or not _uses_official_dense_compat_prior(head):
+        return []
+
+    neck = _dict_get(obj, "neck", {})
+    neck_type = str(_dict_get(neck, "type", ""))
+    if neck_type in DENSE_COMPAT_NECK_TYPES:
+        return []
+
+    return [
+        _violation(
+            f"{path}.rpn_head.prior_generator",
+            "dense_compat_mode",
+            _dict_get(_prior_generator(head), "dense_compat_mode"),
+            "official_actionformer dense compatibility requires a dense reference grid neck, "
+            f"got neck.type={neck_type!r}",
+        )
+    ]
 
 
 def scan_route_contract_object(obj, path):
@@ -224,7 +265,12 @@ def scan_route_contract_object(obj, path):
                 "route_contract contradicts bridge allow_center_fallback_inside_gt",
             )
         )
-    expected_compatibility = LEGACY_COMPATIBILITY if uses_legacy_route else CORRECTED_COMPATIBILITY
+    if uses_legacy_route:
+        expected_compatibility = LEGACY_COMPATIBILITY
+    elif _uses_official_dense_compat_prior(obj):
+        expected_compatibility = CORRECTED_COMPATIBILITY
+    else:
+        expected_compatibility = IRREGULAR_COMPATIBILITY
     if compatibility not in {expected_compatibility, None}:
         violations.append(
             _violation(

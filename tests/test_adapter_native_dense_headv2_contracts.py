@@ -369,7 +369,8 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert absrange_radiuslevel.model.rpn_head.allow_legacy_full_cell_span is False
     assert absrange_radiuslevel.model.rpn_head.allow_center_fallback_inside_gt is False
-    assert absrange_radiuslevel.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
+    assert getattr(absrange_radiuslevel.model.rpn_head.prior_generator, "dense_compat_mode", None) is None
+    assert absrange_radiuslevel.model.rpn_head.route_contract.compatibility == "irregular_geometry_diagnostic_candidate"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -382,6 +383,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert levelstride.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert levelstride.model.rpn_head.allow_legacy_full_cell_span is False
     assert levelstride.model.rpn_head.allow_center_fallback_inside_gt is False
+    assert levelstride.model.rpn_head.route_contract.compatibility == "irregular_geometry_diagnostic_candidate"
     assert levelstride.model.rpn_head.prior_generator.range_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -393,7 +395,8 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_expanded.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert absrange_expanded.model.rpn_head.allow_legacy_full_cell_span is False
     assert absrange_expanded.model.rpn_head.allow_center_fallback_inside_gt is False
-    assert absrange_expanded.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
+    assert getattr(absrange_expanded.model.rpn_head.prior_generator, "dense_compat_mode", None) is None
+    assert absrange_expanded.model.rpn_head.route_contract.compatibility == "irregular_geometry_diagnostic_candidate"
     assert absrange_expanded.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_expanded.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_expanded.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -443,6 +446,12 @@ def test_bridge_corrected_derivative_configs_clear_legacy_scale_opt_in():
         assert head.reg_denom_mode == "left_right_mean"
         assert head.allow_legacy_full_cell_span is False
         assert head.allow_center_fallback_inside_gt is False
+
+    assert shortgate.model.rpn_head.route_contract.compatibility == "irregular_geometry_diagnostic_candidate"
+    assert getattr(shortgate.model.rpn_head.prior_generator, "dense_compat_mode", None) is None
+    assert selected_axis.model.neck.type == "IrregularFPNDenseAdapter"
+    assert selected_axis.model.rpn_head.route_contract.compatibility == "dense_compatible_diagnostic_candidate"
+    assert selected_axis.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
 
 
 def test_early_bridge_exploration_configs_make_scale_contract_explicit():
@@ -764,6 +773,11 @@ def test_selected_axis_random_uniform_control_matrix_contracts():
             assert bool(step.remap_gt_to_selected_axis), (name, split)
             assert int(step.target_len) == 384, (name, split)
 
+        if name == "random_bridge_selected_absrange_expanded":
+            assert cfg.model.neck.type == "IrregularFPNDenseAdapter", name
+            assert cfg.model.rpn_head.route_contract.compatibility == "dense_compatible_diagnostic_candidate", name
+            assert cfg.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer", name
+
         assert steps["train"].method_base == "random_trunc", name
         assert steps["val"].method_base == "sliding_window", name
         assert steps["test"].method_base == "sliding_window", name
@@ -774,7 +788,10 @@ def test_selected_axis_random_uniform_control_matrix_contracts():
             assert cfg.model.rpn_head.prior_generator.type == "PointGenerator", name
         else:
             assert cfg.model.projection.type == "GridAwareConv1DTransformerProj", name
-            assert cfg.model.neck.type == "GridAwareFPNIdentity", name
+            if name == "random_bridge_selected_absrange_expanded":
+                assert cfg.model.neck.type == "IrregularFPNDenseAdapter", name
+            else:
+                assert cfg.model.neck.type == "GridAwareFPNIdentity", name
             assert cfg.model.rpn_head.assignment_mode == "hard", name
             assert cfg.model.rpn_head.regression_mode == "symmetric_linear", name
             assert cfg.model.rpn_head.prior_generator.type == "IrregularPointGeneratorV2", name
@@ -1430,6 +1447,84 @@ def test_fail_closed_config_scanner_rejects_route_contract_contradictions():
     assert "cfg.model.rpn_head.route_contract.allow_legacy_full_cell_span" in paths
     assert "cfg.model.rpn_head.route_contract.allow_center_fallback_inside_gt" in paths
     assert "cfg.model.rpn_head.route_contract.compatibility" in paths
+
+
+def test_fail_closed_config_scanner_rejects_official_dense_prior_without_dense_reference_neck():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_dense_prior_neck")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                neck=dict(type="GridAwareFPNIdentity"),
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    prior_generator=dict(dense_compat_mode="official_actionformer"),
+                    route_contract=dict(
+                        compatibility="dense_compatible_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert any("dense reference grid neck" in item["reason"] for item in violations)
+
+
+def test_fail_closed_config_scanner_allows_official_dense_prior_with_dense_adapter_neck():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_dense_prior_adapter")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                neck=dict(type="IrregularFPNDenseAdapter"),
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    prior_generator=dict(dense_compat_mode="official_actionformer"),
+                    route_contract=dict(
+                        compatibility="dense_compatible_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert violations == []
+
+
+def test_fail_closed_config_scanner_rejects_dense_compat_label_without_official_dense_prior():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_dense_label_without_prior")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                neck=dict(type="GridAwareFPNIdentity"),
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    prior_generator=dict(range_mode="absolute"),
+                    route_contract=dict(
+                        compatibility="dense_compatible_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                    ),
+                ),
+            )
+        )
+    )
+
+    assert any("irregular_geometry_diagnostic_candidate" in item["reason"] for item in violations)
 
 
 def test_fail_closed_config_scanner_expands_shell_literal_globs(tmp_path):
