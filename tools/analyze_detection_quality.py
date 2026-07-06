@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import runpy
 from collections import defaultdict
 from pathlib import Path
@@ -47,7 +48,19 @@ def _resolve_path(value, base_dir):
     return path
 
 
-def resolve_ground_truth_from_config(config_path, split="val"):
+def _iter_ground_truth_fallbacks(fallback_paths=None):
+    if fallback_paths:
+        for path in fallback_paths:
+            yield path
+    env_annotation = os.environ.get("THUMOS_ANNOTATION")
+    if env_annotation:
+        yield env_annotation
+    thumos_root = os.environ.get("THUMOS_ROOT")
+    if thumos_root:
+        yield Path(thumos_root) / "annotations" / "thumos_14_anno.json"
+
+
+def resolve_ground_truth_from_config(config_path, split="val", fallback_paths=None):
     config_path = Path(config_path)
     cfg = _load_config(config_path)
     dataset = _cfg_get(cfg, "dataset")
@@ -55,7 +68,14 @@ def resolve_ground_truth_from_config(config_path, split="val"):
     ann_file = _cfg_get(split_cfg, "ann_file")
     if not ann_file:
         raise ValueError(f"Could not resolve dataset.{split}.ann_file from {config_path}")
-    return _resolve_path(ann_file, config_path.parent)
+    resolved = _resolve_path(ann_file, config_path.parent)
+    if resolved.exists():
+        return resolved
+    for fallback in _iter_ground_truth_fallbacks(fallback_paths):
+        fallback_path = _resolve_path(fallback, config_path.parent)
+        if fallback_path.exists():
+            return fallback_path
+    return resolved
 
 
 def resolve_prediction_path(path):
@@ -277,6 +297,12 @@ def parse_args():
     parser.add_argument("--prediction", default=None, help="OpenTAD result JSON with a results field")
     parser.add_argument("--config", default=None, help="OpenTAD config used to resolve dataset.<split>.ann_file")
     parser.add_argument(
+        "--ground-truth-fallback",
+        action="append",
+        default=[],
+        help="Fallback annotation path used when the config ann_file is stale or unavailable.",
+    )
+    parser.add_argument(
         "--experiment-dir",
         default=None,
         help="Experiment work_dir or run directory; the newest result_detection.json below it is used.",
@@ -297,7 +323,11 @@ def main():
     prediction = args.prediction
 
     if ground_truth is None and args.config is not None:
-        ground_truth = resolve_ground_truth_from_config(args.config, args.dataset_split)
+        ground_truth = resolve_ground_truth_from_config(
+            args.config,
+            args.dataset_split,
+            fallback_paths=args.ground_truth_fallback,
+        )
     if prediction is None and args.experiment_dir is not None:
         prediction = resolve_prediction_path(args.experiment_dir)
     if ground_truth is None:

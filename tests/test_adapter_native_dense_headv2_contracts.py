@@ -430,6 +430,34 @@ def test_detection_quality_analyzer_resolves_config_gt_and_latest_result(tmp_pat
     assert analyzer.resolve_prediction_path(tmp_path / "exps" / "toy_exp") == newer
 
 
+def test_detection_quality_analyzer_uses_existing_gt_fallback_when_config_path_is_stale(tmp_path):
+    analyzer = load_module("tools/analyze_detection_quality.py", "detection_quality_analyzer_gt_fallback")
+
+    cfg_path = tmp_path / "toy_config.py"
+    stale_ann_path = tmp_path / "missing" / "annotations.json"
+    fallback_ann_path = tmp_path / "real" / "annotations.json"
+    fallback_ann_path.parent.mkdir(parents=True)
+    fallback_ann_path.write_text('{"database": {}}', encoding="utf-8")
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "dataset = dict(",
+                f"    val=dict(ann_file=r'{stale_ann_path}'),",
+                ")",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = analyzer.resolve_ground_truth_from_config(
+        cfg_path,
+        "val",
+        fallback_paths=[fallback_ann_path],
+    )
+
+    assert resolved == fallback_ann_path
+
+
 def test_bridge_head_half_cell_scale_mode_on_linux():
     torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")
