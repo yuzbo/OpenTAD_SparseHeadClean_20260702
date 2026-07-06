@@ -11,7 +11,7 @@ model = dict(
                 (0, 10000),
                 (0, 10000),
             ],
-            range_mode="hard",
+            range_mode="open",
         )
     )
 )

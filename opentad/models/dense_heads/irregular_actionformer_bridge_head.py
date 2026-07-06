@@ -91,7 +91,14 @@ class IrregularActionFormerBridgeHead(nn.Module):
             raise ValueError(f"Unsupported soft_reg_weight_mode: {self.soft_reg_weight_mode}")
         if self.soft_cls_target_mode not in {"soft", "binary"}:
             raise ValueError(f"Unsupported soft_cls_target_mode: {self.soft_cls_target_mode}")
-        scale_base_modes = {"full_cell_span", "half_cell_span", "min_side", "left_right_mean"}
+        scale_base_modes = {
+            "full_cell_span",
+            "half_cell_span",
+            "min_side",
+            "left_right_mean",
+            "point_range",
+            "point_radius",
+        }
         if self.center_radius_scale not in scale_base_modes:
             raise ValueError(f"Unsupported center_radius_scale: {self.center_radius_scale}")
         if self.reg_denom_mode not in scale_base_modes:
@@ -239,7 +246,17 @@ class IrregularActionFormerBridgeHead(nn.Module):
             right_scale = point_scale
         return center, reg_min, reg_max, left_scale, right_scale, point_scale
 
-    def _scale_base(self, left_scale, right_scale, point_scale, mode):
+    def _point_fields_extended(self, point_tensor):
+        center, reg_min, reg_max, left_scale, right_scale, point_scale = self._point_fields(point_tensor)
+        if point_tensor.shape[-1] >= 7:
+            range_scale = point_tensor[..., 5].clamp_min(self.reg_denom_floor)
+            radius_scale = point_tensor[..., 6].clamp_min(self.reg_denom_floor)
+        else:
+            range_scale = point_scale
+            radius_scale = point_scale
+        return center, reg_min, reg_max, left_scale, right_scale, point_scale, range_scale, radius_scale
+
+    def _scale_base(self, left_scale, right_scale, point_scale, mode, range_scale=None, radius_scale=None):
         if mode == "full_cell_span":
             return point_scale.clamp_min(self.reg_denom_floor)
         if mode == "half_cell_span":
@@ -248,6 +265,14 @@ class IrregularActionFormerBridgeHead(nn.Module):
             return torch.minimum(left_scale, right_scale).clamp_min(self.reg_denom_floor)
         if mode == "left_right_mean":
             return (0.5 * (left_scale + right_scale)).clamp_min(self.reg_denom_floor)
+        if mode == "point_range":
+            if range_scale is None:
+                range_scale = point_scale
+            return range_scale.clamp_min(self.reg_denom_floor)
+        if mode == "point_radius":
+            if radius_scale is None:
+                radius_scale = point_scale
+            return radius_scale.clamp_min(self.reg_denom_floor)
         raise ValueError(f"Unsupported scale mode: {mode}")
 
     def _level_offsets(self, points):
@@ -259,9 +284,16 @@ class IrregularActionFormerBridgeHead(nn.Module):
             start += level_len
         return offsets
 
-    def _encode_regression_targets(self, left, right, left_scale, right_scale, point_scale):
+    def _encode_regression_targets(self, left, right, left_scale, right_scale, point_scale, range_scale=None, radius_scale=None):
         if self.regression_mode == "symmetric_linear":
-            denom = self._scale_base(left_scale, right_scale, point_scale, self.reg_denom_mode)
+            denom = self._scale_base(
+                left_scale,
+                right_scale,
+                point_scale,
+                self.reg_denom_mode,
+                range_scale=range_scale,
+                radius_scale=radius_scale,
+            )
             return torch.stack(
                 [
                     (left / denom).clamp_min(0.0),
@@ -281,10 +313,19 @@ class IrregularActionFormerBridgeHead(nn.Module):
     def get_refined_proposals(self, points, reg_pred):
         point_tensor = self._concat_points(points)
         reg_tensor = torch.cat(reg_pred, dim=-1).permute(0, 2, 1)
-        center, _, _, left_scale, right_scale, point_scale = self._point_fields(point_tensor)
+        center, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = self._point_fields_extended(
+            point_tensor
+        )
 
         if self.regression_mode == "symmetric_linear":
-            denom = self._scale_base(left_scale, right_scale, point_scale, self.reg_denom_mode)
+            denom = self._scale_base(
+                left_scale,
+                right_scale,
+                point_scale,
+                self.reg_denom_mode,
+                range_scale=range_scale,
+                radius_scale=radius_scale,
+            )
             left = reg_tensor[:, :, 0] * denom
             right = reg_tensor[:, :, 1] * denom
         else:
@@ -427,16 +468,23 @@ class IrregularActionFormerBridgeHead(nn.Module):
         return {"cls_loss": cls_loss, "reg_loss": reg_loss * reg_loss_weight}
 
     def _build_candidate_mask(self, point, gt_segs, reg_targets):
-        center_t, _, _, left_scale, right_scale, point_scale = self._point_fields(point)
+        center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = self._point_fields_extended(
+            point
+        )
         center_t = center_t[:, None]
         inside_gt_seg = reg_targets.min(dim=-1).values > 0
         if self.center_sample != "radius":
             return inside_gt_seg
 
         center_pts = 0.5 * (gt_segs[:, :, 0] + gt_segs[:, :, 1])
-        radius_base = torch.sqrt((left_scale[:, None] * right_scale[:, None]).clamp_min(self.reg_denom_floor**2))
-        if point.shape[-1] < 5:
-            radius_base = point_scale[:, None]
+        radius_base = self._scale_base(
+            left_scale,
+            right_scale,
+            point_scale,
+            self.center_radius_scale,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )[:, None]
         radius = self.center_sample_radius * radius_base
         t_mins = center_pts - radius
         t_maxs = center_pts + radius
@@ -451,14 +499,25 @@ class IrregularActionFormerBridgeHead(nn.Module):
         return candidate_mask
 
     def _build_assignment_weights(self, point, gt_segment, candidate_mask):
-        center_t, _, _, _, _, point_scale = self._point_fields(point)
+        center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = self._point_fields_extended(
+            point
+        )
         center_t = center_t[:, None]
-        point_scale = point_scale[:, None]
+        assign_scale = self._scale_base(
+            left_scale,
+            right_scale,
+            point_scale,
+            self.reg_denom_mode,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )[:, None]
         gt_center = 0.5 * (gt_segment[:, 0] + gt_segment[:, 1])[None, :]
         gt_len = (gt_segment[:, 1] - gt_segment[:, 0])[None, :].clamp_min(self.reg_denom_floor)
 
-        center_cost = (center_t - gt_center).abs() / (0.5 * gt_len + 0.5 * point_scale).clamp_min(self.reg_denom_floor)
-        scale_cost = torch.abs(torch.log((gt_len / point_scale).clamp_min(1e-6)))
+        center_cost = (center_t - gt_center).abs() / (0.5 * gt_len + 0.5 * assign_scale).clamp_min(
+            self.reg_denom_floor
+        )
+        scale_cost = torch.abs(torch.log((gt_len / assign_scale).clamp_min(1e-6)))
         total_cost = self.soft_center_cost_weight * center_cost + self.soft_scale_cost_weight * scale_cost
         total_cost = total_cost.masked_fill(~candidate_mask, float("inf"))
 
@@ -489,7 +548,16 @@ class IrregularActionFormerBridgeHead(nn.Module):
         for point, gt_segment, gt_label in zip(point_list, gt_segments, gt_labels):
             # point: [N_pts, 4or5]
             num_pts = point.shape[0]
-            center_t, reg_min, reg_max, left_scale, right_scale, point_scale = self._point_fields(point)
+            (
+                center_t,
+                reg_min,
+                reg_max,
+                left_scale,
+                right_scale,
+                point_scale,
+                range_scale,
+                radius_scale,
+            ) = self._point_fields_extended(point)
             num_gts = gt_segment.shape[0]
             if num_gts == 0:
                 gt_cls.append(gt_segment.new_zeros((num_pts, self.num_classes)))
@@ -505,7 +573,14 @@ class IrregularActionFormerBridgeHead(nn.Module):
 
             if self.center_sample == "radius":
                 center_pts = 0.5 * (gt_segs[:, :, 0] + gt_segs[:, :, 1])
-                radius_base = self._scale_base(left_scale, right_scale, point_scale, self.center_radius_scale)
+                radius_base = self._scale_base(
+                    left_scale,
+                    right_scale,
+                    point_scale,
+                    self.center_radius_scale,
+                    range_scale=range_scale,
+                    radius_scale=radius_scale,
+                )
                 radius = radius_base[:, None] * self.center_sample_radius
                 t_mins = center_pts - radius
                 t_maxs = center_pts + radius
@@ -542,6 +617,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
                 left_scale[:, None],
                 right_scale[:, None],
                 point_scale[:, None],
+                range_scale[:, None],
+                radius_scale[:, None],
             )
             reg_target = reg_encoded[torch.arange(num_pts, device=point.device), min_len_inds]
             reg_weight = (min_len < float("inf")).to(reg_targets.dtype)
@@ -585,7 +662,9 @@ class IrregularActionFormerBridgeHead(nn.Module):
                 reg_weight_list.append(gt_segment.new_zeros((num_pts,)))
                 continue
 
-            center_t, _, _, left_scale, right_scale, point_scale = self._point_fields(point)
+            center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = (
+                self._point_fields_extended(point)
+            )
             gt_segs = gt_segment[None].expand(num_pts, num_gts, 2)
             left = center_t[:, None] - gt_segs[:, :, 0]
             right = gt_segs[:, :, 1] - center_t[:, None]
@@ -605,6 +684,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
                 left_scale[:, None],
                 right_scale[:, None],
                 point_scale[:, None],
+                range_scale[:, None],
+                radius_scale[:, None],
             )
             reg_weight, best_gt_idx = assign_weights.max(dim=1)
             reg_target = reg_encoded[torch.arange(num_pts, device=point.device), best_gt_idx]
@@ -671,7 +752,9 @@ class IrregularActionFormerBridgeHead(nn.Module):
                 reg_weight_list.append(gt_segment.new_zeros((num_pts,)))
                 continue
 
-            center_t, _, _, left_scale, right_scale, point_scale = self._point_fields(point)
+            center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = (
+                self._point_fields_extended(point)
+            )
             gt_segs = gt_segment[None].expand(num_pts, num_gts, 2)
             gt_center = 0.5 * (gt_segment[:, 0] + gt_segment[:, 1])
 
@@ -699,6 +782,8 @@ class IrregularActionFormerBridgeHead(nn.Module):
                 left_scale[:, None],
                 right_scale[:, None],
                 point_scale[:, None],
+                range_scale[:, None],
+                radius_scale[:, None],
             )
             masked_oracle_cost = oracle_cost.masked_fill(~oracle_mask, float("inf"))
             min_cost, best_gt_idx = masked_oracle_cost.min(dim=1)

@@ -54,7 +54,7 @@ Reference snapshot:
 
 7. Irregular point scale semantics are now explicit.
 
-   `IrregularPointGeneratorV2` uses the full local cell span `cell_left + cell_right` as the regression-range point scale, while preserving `cell_left` and `cell_right` as separate decode scales in the point tensor. This is different from `temporal_grid["level_scale"]`, which stores `0.5 * (cell_left + cell_right)`. The bridge experiments should be interpreted with this scale convention in mind.
+   The legacy `range_mode="hard"` / `local_cell_span` behavior uses the full local cell span `cell_left + cell_right` as the regression-range scale while preserving `cell_left` and `cell_right` as decode scales. This is now treated as a reproducible ablation, not as the corrected dense-like contract. `IrregularPointGeneratorV2` now emits explicit point fields `[center, reg_min, reg_max, decode_left, decode_right, range_scale, radius_scale]`, so bridge heads can separate regression range, regression decode denominator, and center-radius scale. The corrected dense-like candidate is `range_mode="level_stride"` with `decode_scale_mode="level_stride"`, `radius_scale_mode="level_stride"`, `center_radius_scale="point_radius"`, and `reg_denom_mode="left_right_mean"`.
 
 8. Openrange confirms the range failure, but not the high-IoU failure.
 
@@ -73,7 +73,11 @@ Reference snapshot:
 
 10. The current highest-risk implementation contract is scale separation.
 
-   The review identifies `IrregularPointGeneratorV2` and `IrregularActionFormerBridgeHead` as high-risk because range scale, decode scale, and center-radius scale have historically been mixed together through `cell_left + cell_right`. The current `range_mode="hard"` collapse is the visible symptom. The next implementation direction should separate point fields into range scale, left/right decode scale, and radius scale; keep `local_cell_span` behavior only as an ablation; and add same-batch audits that report center failures, range failures, GT coverage, per-level positives, and proposal coordinate sanity.
+   The review identifies `IrregularPointGeneratorV2` and `IrregularActionFormerBridgeHead` as high-risk because range scale, decode scale, and center-radius scale have historically been mixed together through `cell_left + cell_right`. The current `range_mode="hard"` collapse is the visible symptom. This has now been fixed at the contract level by separating range, decode, and radius fields in V2 points and by teaching `IrregularActionFormerBridgeHead` to use explicit `point_range` / `point_radius` scale modes. The remaining question is empirical: whether the corrected dense-like contract recovers high-IoU localization under native-axis sparse sampling.
+
+12. Temporal-grid downsampling had a real interval-semantics bug.
+
+   `downsample_temporal_grid` previously used `center +/- 0.5 * cell_left/right` and then doubled the merged distances. This was inconsistent with `build_temporal_grid`, where `cell_left` and `cell_right` already represent the full distance to the left/right temporal support boundary. The implementation now merges full support intervals `center - cell_left` and `center + cell_right`, then stores the true merged left/right distances. This affects grid-aware projection/neck levels and should be included in any post-fix audit because it changes the temporal geometry delivered to the head.
 
 11. Projection/backbone/neck geometry remains a possible first-order failure.
 
@@ -103,6 +107,18 @@ Reference snapshot:
   - If `absrange` trails openrange badly, openrange's broad recall is doing the work and absolute dense-like ranges may be too sparse under native-axis cells.
   - If `absrange` matches or beats openrange, the next target is not "more positives" but scale-calibrated, dense-like assignment / decode.
 
+- 2026-07-06 implementation update after official review:
+  - Confirmed and fixed two concrete implementation errors:
+    - `IrregularPointGeneratorV2` / `IrregularActionFormerBridgeHead` previously conflated regression range scale, decode scale, and center-radius scale through `cell_left + cell_right`.
+    - `downsample_temporal_grid` previously treated `cell_left/right` as half-widths during downsampling even though they are full support distances.
+  - `IrregularPointGeneratorV2` now supports `range_mode="open"` and `range_mode="level_stride"`, plus explicit `decode_scale_mode` and `radius_scale_mode`.
+  - `IrregularActionFormerBridgeHead` now keeps the old six-field `_point_fields()` contract for compatibility and adds `_point_fields_extended()` for scale-separated bridge assignment, regression encode/decode, proposal decode, and audit.
+  - `tools/audit_sparse_head_assignment.py` now consumes the extended fields when present, so same-batch reports use the same radius/denominator semantics as the model.
+  - Updated `bridge_hard_linear_openrange` to use semantic `range_mode="open"`.
+  - Updated `bridge_hard_linear_absrange_radiuslevel` to use level-stride decode/radius fields instead of the older half-cell-span approximation.
+  - Added `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py` as the corrected dense-like bridge candidate.
+  - Added tests for V2 level-stride field separation and full-interval temporal-grid downsampling. Local Windows config tests pass; Linux tensor tests must be run on the remote environment.
+
 - Stop prioritizing geometry ablations until the supervision path is repaired.
 - Stop treating missing regression range gate as a standalone primary cause; the completed `reggate` run refutes that narrow hypothesis.
 - Audit before long-training the corrected bridge route:
@@ -110,6 +126,7 @@ Reference snapshot:
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py`
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py`
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py`
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py`
 - Run dense-like bridge ablations first:
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_n16r4.py`
   - `configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_log_n16r4.py`

@@ -110,47 +110,86 @@ def split_points_per_sample(head, points, batch_size):
 
 
 def point_fields(head, point):
+    if hasattr(head, "_point_fields_extended"):
+        return head._point_fields_extended(point)
     if hasattr(head, "_point_fields"):
-        return head._point_fields(point)
+        fields = head._point_fields(point)
+        center, reg_min, reg_max, left_scale, right_scale, point_scale = fields
+        return center, reg_min, reg_max, left_scale, right_scale, point_scale, point_scale, point_scale
     center = point[..., 0]
     reg_min = point[..., 1]
     reg_max = point[..., 2]
     left_scale = point[..., 3]
     right_scale = point[..., 4] if point.shape[-1] >= 5 else left_scale
     point_scale = (left_scale + right_scale).clamp_min(1e-6)
-    return center, reg_min, reg_max, left_scale, right_scale, point_scale
+    if point.shape[-1] >= 7:
+        range_scale = point[..., 5].clamp_min(1e-6)
+        radius_scale = point[..., 6].clamp_min(1e-6)
+    else:
+        range_scale = point_scale
+        radius_scale = point_scale
+    return center, reg_min, reg_max, left_scale, right_scale, point_scale, range_scale, radius_scale
 
 
-def scale_base(head, left_scale, right_scale, point_scale, mode):
+def scale_base(head, left_scale, right_scale, point_scale, mode, range_scale=None, radius_scale=None):
     if hasattr(head, "_scale_base"):
-        return head._scale_base(left_scale, right_scale, point_scale, mode)
+        return head._scale_base(
+            left_scale,
+            right_scale,
+            point_scale,
+            mode,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )
     if mode == "half_cell_span":
         return 0.5 * point_scale
     if mode == "min_side":
         return torch.minimum(left_scale, right_scale)
     if mode == "left_right_mean":
         return 0.5 * (left_scale + right_scale)
+    if mode == "point_range" and range_scale is not None:
+        return range_scale
+    if mode == "point_radius" and radius_scale is not None:
+        return radius_scale
     return point_scale
 
 
-def encode_targets(head, left, right, left_scale, right_scale, point_scale):
+def encode_targets(head, left, right, left_scale, right_scale, point_scale, range_scale=None, radius_scale=None):
     if hasattr(head, "_encode_regression_targets"):
-        return head._encode_regression_targets(left, right, left_scale, right_scale, point_scale)
+        return head._encode_regression_targets(
+            left,
+            right,
+            left_scale,
+            right_scale,
+            point_scale,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )
     return torch.stack([left / point_scale, right / point_scale], dim=-1).clamp_min(0.0)
 
 
-def decode_encoded_targets(head, encoded, left_scale, right_scale, point_scale):
+def decode_encoded_targets(head, encoded, left_scale, right_scale, point_scale, range_scale=None, radius_scale=None):
     regression_mode = getattr(head, "regression_mode", "symmetric_linear")
     if regression_mode == "symmetric_linear":
         mode = getattr(head, "reg_denom_mode", "full_cell_span")
-        denom = scale_base(head, left_scale, right_scale, point_scale, mode)
+        denom = scale_base(
+            head,
+            left_scale,
+            right_scale,
+            point_scale,
+            mode,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )
         return encoded[:, 0] * denom, encoded[:, 1] * denom
     return torch.expm1(encoded[:, 0].clamp_min(0.0)) * left_scale, torch.expm1(encoded[:, 1].clamp_min(0.0)) * right_scale
 
 
 @torch.no_grad()
 def build_hard_diagnostics(head, point, gt_segment, offsets):
-    center_t, reg_min, reg_max, left_scale, right_scale, point_scale = point_fields(head, point)
+    center_t, reg_min, reg_max, left_scale, right_scale, point_scale, range_scale, radius_scale = point_fields(
+        head, point
+    )
     num_pts = int(point.shape[0])
     num_gts = int(gt_segment.shape[0])
 
@@ -190,7 +229,15 @@ def build_hard_diagnostics(head, point, gt_segment, offsets):
     if getattr(head, "center_sample", "radius") == "radius":
         center_pts = 0.5 * (gt_segs[:, :, 0] + gt_segs[:, :, 1])
         radius_mode = getattr(head, "center_radius_scale", "full_cell_span")
-        radius_base = scale_base(head, left_scale, right_scale, point_scale, radius_mode)
+        radius_base = scale_base(
+            head,
+            left_scale,
+            right_scale,
+            point_scale,
+            radius_mode,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )
         radius = radius_base[:, None] * float(getattr(head, "center_sample_radius", 1.5))
         t_mins = center_pts - radius
         t_maxs = center_pts + radius
@@ -231,8 +278,25 @@ def build_hard_diagnostics(head, point, gt_segment, offsets):
         cols = assigned[pos]
         raw_left = left[rows, cols]
         raw_right = right[rows, cols]
-        enc = encode_targets(head, raw_left, raw_right, left_scale[pos], right_scale[pos], point_scale[pos])
-        dec_left, dec_right = decode_encoded_targets(head, enc, left_scale[pos], right_scale[pos], point_scale[pos])
+        enc = encode_targets(
+            head,
+            raw_left,
+            raw_right,
+            left_scale[pos],
+            right_scale[pos],
+            point_scale[pos],
+            range_scale=range_scale[pos],
+            radius_scale=radius_scale[pos],
+        )
+        dec_left, dec_right = decode_encoded_targets(
+            head,
+            enc,
+            left_scale[pos],
+            right_scale[pos],
+            point_scale[pos],
+            range_scale=range_scale[pos],
+            radius_scale=radius_scale[pos],
+        )
         result.update(
             {
                 "reg_target_left_p50": quantile_or_none(raw_left, 0.5),

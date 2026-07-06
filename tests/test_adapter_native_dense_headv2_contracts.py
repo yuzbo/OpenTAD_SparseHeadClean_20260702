@@ -209,8 +209,11 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     absrange_radiuslevel = load_mmengine_config_or_skip(
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py"
     )
+    levelstride = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py"
+    )
 
-    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange, absrange_radiuslevel):
+    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange, absrange_radiuslevel, levelstride):
         head = cfg.model.rpn_head
         assert cfg.model.projection.type == "GridAwareConv1DTransformerProj"
         assert cfg.model.neck.type == "GridAwareFPNIdentity"
@@ -240,7 +243,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
 
     assert openrange.model.rpn_head.assignment_mode == "hard"
     assert openrange.model.rpn_head.regression_mode == "symmetric_linear"
-    assert openrange.model.rpn_head.prior_generator.range_mode == "hard"
+    assert openrange.model.rpn_head.prior_generator.range_mode == "open"
     assert all(tuple(item) == (0, 10000) for item in openrange.model.rpn_head.prior_generator.regression_range)
     assert "hard_linear_openrange_n16r4" in openrange.work_dir
 
@@ -252,11 +255,22 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
 
     assert absrange_radiuslevel.model.rpn_head.assignment_mode == "hard"
     assert absrange_radiuslevel.model.rpn_head.regression_mode == "symmetric_linear"
-    assert absrange_radiuslevel.model.rpn_head.center_radius_scale == "half_cell_span"
-    assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "half_cell_span"
+    assert absrange_radiuslevel.model.rpn_head.center_radius_scale == "point_radius"
+    assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.range_mode == "absolute"
+    assert absrange_radiuslevel.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
+    assert absrange_radiuslevel.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
     assert tuple(absrange_radiuslevel.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
     assert "hard_linear_absrange_radiuslevel_n16r4" in absrange_radiuslevel.work_dir
+
+    assert levelstride.model.rpn_head.assignment_mode == "hard"
+    assert levelstride.model.rpn_head.regression_mode == "symmetric_linear"
+    assert levelstride.model.rpn_head.center_radius_scale == "point_radius"
+    assert levelstride.model.rpn_head.reg_denom_mode == "left_right_mean"
+    assert levelstride.model.rpn_head.prior_generator.range_mode == "level_stride"
+    assert levelstride.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
+    assert levelstride.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
+    assert "hard_linear_levelstride_n16r4" in levelstride.work_dir
 
 
 def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
@@ -265,10 +279,13 @@ def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
     assert "center_radius_scale=\"full_cell_span\"" in bridge_impl
     assert "reg_denom_mode=\"full_cell_span\"" in bridge_impl
     assert "def _scale_base(" in bridge_impl
+    assert "def _point_fields_extended(" in bridge_impl
     assert 'mode == "full_cell_span"' in bridge_impl
     assert 'mode == "half_cell_span"' in bridge_impl
     assert 'mode == "min_side"' in bridge_impl
     assert 'mode == "left_right_mean"' in bridge_impl
+    assert 'mode == "point_range"' in bridge_impl
+    assert 'mode == "point_radius"' in bridge_impl
 
 
 def test_sparse_head_assignment_audit_tool_contract():
@@ -420,6 +437,36 @@ def test_irregular_point_generator_v2_full_cell_span_scale_on_linux():
     assert torch.allclose(points[..., 4], grid["cell_right"])
 
 
+def test_irregular_point_generator_v2_level_stride_separates_range_decode_radius_on_linux():
+    torch = import_torch_or_skip()
+    point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
+
+    generator = point_generator.IrregularPointGeneratorV2(
+        strides=[4],
+        regression_range=[(1, 2)],
+        range_mode="level_stride",
+        decode_scale_mode="cell",
+        radius_scale_mode="level_stride",
+    )
+    feat = torch.zeros(1, 1, 3)
+    grid = {
+        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "cell_left": torch.tensor([[2.0, 4.0, 8.0]]),
+        "cell_right": torch.tensor([[3.0, 5.0, 9.0]]),
+    }
+
+    points = generator([feat], [grid])[0]
+
+    assert points.shape[-1] == 7
+    assert torch.allclose(points[..., 0], grid["center"])
+    assert torch.allclose(points[..., 1], torch.full((1, 3), 4.0))
+    assert torch.allclose(points[..., 2], torch.full((1, 3), 8.0))
+    assert torch.allclose(points[..., 3], grid["cell_left"])
+    assert torch.allclose(points[..., 4], grid["cell_right"])
+    assert torch.allclose(points[..., 5], torch.full((1, 3), 4.0))
+    assert torch.allclose(points[..., 6], torch.full((1, 3), 4.0))
+
+
 def test_irregular_point_generator_v2_absolute_range_does_not_scale_on_linux():
     torch = import_torch_or_skip()
     point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
@@ -462,6 +509,25 @@ def test_temporal_grid_explicit_cells_are_preserved_on_linux():
     assert torch.allclose(grid["cell_left"], left)
     assert torch.allclose(grid["cell_right"], right)
     assert torch.allclose(grid["level_scale"], torch.tensor([108.75]))
+
+
+def test_temporal_grid_downsample_merges_full_cell_support_intervals_on_linux():
+    torch = import_torch_or_skip()
+    temporal_grid = load_module("opentad/models/utils/temporal_grid.py", "temporal_grid_downsample_cells")
+
+    grid = temporal_grid.build_temporal_grid(
+        torch.tensor([[0.0, 2.0, 5.0, 100.0]], dtype=torch.float32),
+        valid_mask=torch.ones(1, 4, dtype=torch.bool),
+        cell_left=torch.tensor([[2.0, 2.0, 3.0, 95.0]], dtype=torch.float32),
+        cell_right=torch.tensor([[2.0, 3.0, 95.0, 668.0]], dtype=torch.float32),
+    )
+
+    downsampled = temporal_grid.downsample_temporal_grid(grid)
+
+    assert torch.allclose(downsampled["center"], torch.tensor([[1.5, 385.0]]))
+    assert torch.allclose(downsampled["cell_left"], torch.tensor([[3.5, 383.0]]))
+    assert torch.allclose(downsampled["cell_right"], torch.tensor([[3.5, 383.0]]))
+    assert torch.allclose(downsampled["level_scale"], torch.tensor([193.25]))
 
 
 def test_irregular_actionformer_native_grid_preserves_dense_right_boundary_on_linux():

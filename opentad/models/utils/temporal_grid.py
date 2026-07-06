@@ -111,24 +111,10 @@ def downsample_temporal_grid(grid, min_scale=1e-4):
 
     pair_valid = even_valid | odd_valid
 
-    even_width = 0.5 * (even_left + even_right) * even_valid.to(center.dtype)
-    odd_width = 0.5 * (odd_left + odd_right) * odd_valid.to(center.dtype)
-    pair_weight = even_width + odd_width
-    fallback_center = torch.where(
-        even_valid,
-        even_center,
-        torch.where(odd_valid, odd_center, even_center.new_zeros(even_center.shape)),
-    )
-    merged_center = torch.where(
-        pair_valid,
-        (even_center * even_width + odd_center * odd_width) / pair_weight.clamp_min(min_scale),
-        fallback_center,
-    )
-
-    even_start = even_center - 0.5 * even_left
-    even_end = even_center + 0.5 * even_right
-    odd_start = odd_center - 0.5 * odd_left
-    odd_end = odd_center + 0.5 * odd_right
+    even_start = even_center - even_left
+    even_end = even_center + even_right
+    odd_start = odd_center - odd_left
+    odd_end = odd_center + odd_right
 
     inf = center.new_full(even_center.shape, float("inf"))
     neg_inf = center.new_full(even_center.shape, float("-inf"))
@@ -140,11 +126,18 @@ def downsample_temporal_grid(grid, min_scale=1e-4):
         torch.where(even_valid, even_end, neg_inf),
         torch.where(odd_valid, odd_end, neg_inf),
     )
+    fallback_center = torch.where(
+        even_valid,
+        even_center,
+        torch.where(odd_valid, odd_center, even_center.new_zeros(even_center.shape)),
+    )
+    interval_center = 0.5 * (merged_start + merged_end)
+    merged_center = torch.where(pair_valid, interval_center, fallback_center)
     merged_start = torch.where(pair_valid, merged_start, merged_center)
     merged_end = torch.where(pair_valid, merged_end, merged_center)
 
-    merged_left = (2.0 * (merged_center - merged_start)).clamp_min(min_scale)
-    merged_right = (2.0 * (merged_end - merged_center)).clamp_min(min_scale)
+    merged_left = (merged_center - merged_start).clamp_min(min_scale)
+    merged_right = (merged_end - merged_center).clamp_min(min_scale)
     merged_fresh = (even_fresh & even_valid) | (odd_fresh & odd_valid)
     level_scale = _masked_mean(0.5 * (merged_left + merged_right), pair_valid, dim=1)
 
