@@ -47,6 +47,15 @@ class Collect:
             "irregular_selected_positions",
             "irregular_selected_valid_len",
             "irregular_native_axis",
+            "irregular_gt_axis",
+            "irregular_proposal_axis",
+            "irregular_postprocess_axis",
+            "irregular_axis_contract",
+            "dropped_selected_axis_gt_segments",
+            "selected_axis_gt_input_count",
+            "selected_axis_gt_keep_count",
+            "selected_axis_gt_drop_count",
+            "allow_drop_selected_axis_gt",
         ],
     ):
         self.inputs = inputs

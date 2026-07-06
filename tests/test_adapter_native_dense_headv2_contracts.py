@@ -1265,6 +1265,23 @@ def test_loadframes_records_explicit_axis_contract_metadata():
     assert 'results["irregular_axis_contract"]' in load_frames_impl
 
 
+def test_collect_preserves_irregular_axis_contract_metadata():
+    collect_impl = read("opentad/datasets/transforms/formatting.py")
+
+    for key in (
+        "irregular_gt_axis",
+        "irregular_proposal_axis",
+        "irregular_postprocess_axis",
+        "irregular_axis_contract",
+        "dropped_selected_axis_gt_segments",
+        "selected_axis_gt_input_count",
+        "selected_axis_gt_keep_count",
+        "selected_axis_gt_drop_count",
+        "allow_drop_selected_axis_gt",
+    ):
+        assert f'"{key}"' in collect_impl
+
+
 @pytest.mark.parametrize(
     ("split_key", "split_value"),
     [
