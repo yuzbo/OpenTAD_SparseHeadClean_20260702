@@ -176,6 +176,10 @@ Reference snapshot:
   - Added explicit axis contract metadata from `LoadFrames`: `irregular_gt_axis`, `irregular_proposal_axis`, `irregular_postprocess_axis`, and `irregular_axis_contract`.
   - Added runtime axis-contract checks in `IrregularActionFormer` before train/test/post-processing, plus optional proposal-axis debug dumping through `post_cfg.debug_dump_proposals`, `debug_dump_path`, and `debug_dump_topk`.
   - Fixed a selected-axis route bug: when `remap_gt_to_selected_axis=True`, the bridge/head temporal grid must emit centers on the selected index axis `0..N`, while native selected positions are kept only for seconds conversion. Previously the selected-axis branch reused native selected positions as head centers, which could silently mismatch proposal coordinates.
+  - Fixed a second selected-axis post-processing contract bug after the monitoring-collapse review:
+    - `LoadFrames` now records `gt_axis=selected`, `proposal_axis=selected`, and `postprocess_axis=native` when GT is remapped to the selected axis.
+    - `IrregularActionFormer` now allows this selected-to-native postprocess contract while still rejecting mismatched train/decode axes.
+    - Non-sliding-window NMS now runs after proposals are converted from selected-axis coordinates to native coordinates, and seconds conversion is told which coordinate axis it is receiving to avoid double selected-to-native conversion.
   - Added deterministic `uniform_fixed_subsample` to support equal-interval 50% sanity controls without changing the existing `random_fixed_subsample` behavior.
   - Added `scripts/verify_official_dense_reference.py` to diff the local dense-reference files against upstream OpenTAD raw files, and added a Linux-only bridge hard uniform-grid target test that locks the official dense target/decode semantics in the stride-1 case.
   - Local dry run `python scripts/verify_official_dense_reference.py --no-fail-on-diff` succeeded and reported dense-reference drift, including major local changes in `anchor_free_head.py` and extra grid-aware FPN classes. Treat this as evidence that current-repo dense code is not an authoritative official baseline.

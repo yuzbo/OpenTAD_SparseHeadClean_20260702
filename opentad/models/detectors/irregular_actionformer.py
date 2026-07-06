@@ -6,7 +6,7 @@ import torch
 from ..builder import DETECTORS, build_backbone, build_projection, build_head, build_neck
 from .base import BaseDetector
 from ..utils import build_temporal_grid, normalize_temporal_grid_input
-from ..utils.post_processing import batched_nms, convert_to_seconds
+from ..utils.post_processing import batched_nms, convert_to_seconds, selected_axis_to_dense_axis
 from ..bricks import Scale, AffineDropPath
 import torch.nn as nn
 
@@ -67,17 +67,23 @@ class IrregularActionFormer(BaseDetector):
         allowed = {"native", "selected"}
         if any(axis not in allowed for axis in axes):
             raise ValueError(f"IrregularActionFormer axis contract has unsupported axes at {stage}: {axes}")
-        if len(set(axes)) != 1:
+        if gt_axis != proposal_axis:
             raise ValueError(
                 "IrregularActionFormer axis contract mismatch at "
                 f"{stage}: gt_axis={gt_axis}, proposal_axis={proposal_axis}, "
                 f"postprocess_axis={postprocess_axis}"
             )
-        expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
-        if gt_axis != expected_axis:
+        if postprocess_axis != proposal_axis and not (proposal_axis == "selected" and postprocess_axis == "native"):
             raise ValueError(
                 "IrregularActionFormer axis contract mismatch at "
-                f"{stage}: irregular_native_axis implies {expected_axis}, got {gt_axis}"
+                f"{stage}: proposal_axis={proposal_axis}, postprocess_axis={postprocess_axis}"
+            )
+        expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
+        if gt_axis != expected_axis or proposal_axis != expected_axis:
+            raise ValueError(
+                "IrregularActionFormer axis contract mismatch at "
+                f"{stage}: irregular_native_axis implies {expected_axis}, "
+                f"got gt_axis={gt_axis}, proposal_axis={proposal_axis}"
             )
 
     def _assert_axis_contracts(self, metas, stage="runtime"):
@@ -86,7 +92,19 @@ class IrregularActionFormer(BaseDetector):
         for meta in metas:
             self._assert_axis_contract(meta, stage=stage)
 
-    def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100):
+    def _segments_to_axis(self, segments, meta, source_axis, target_axis):
+        if source_axis == target_axis:
+            return segments
+        if source_axis == "selected" and target_axis == "native":
+            return selected_axis_to_dense_axis(segments, meta)
+        raise ValueError(f"Unsupported proposal axis conversion: {source_axis} -> {target_axis}")
+
+    def _segments_to_seconds(self, segments, meta, source_axis):
+        seconds_meta = dict(meta)
+        seconds_meta["irregular_native_axis"] = source_axis == "native"
+        return convert_to_seconds(segments, seconds_meta)
+
+    def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None):
         self._assert_axis_contract(meta, stage="proposal_debug")
         if segments.numel() == 0:
             return []
@@ -98,11 +116,12 @@ class IrregularActionFormer(BaseDetector):
         picked_segments = segments[order].detach().cpu()
         picked_scores = scores[order].detach().cpu()
         picked_labels = labels[order].detach().cpu()
-        seconds = convert_to_seconds(picked_segments.clone(), meta)
         _, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
+        segment_axis = segment_axis or proposal_axis
+        seconds = self._segments_to_seconds(picked_segments.clone(), meta, segment_axis)
 
         records = []
-        for rank, (segment_axis, segment_seconds, score, label) in enumerate(
+        for rank, (segment_coords, segment_seconds, score, label) in enumerate(
             zip(picked_segments, seconds, picked_scores, picked_labels)
         ):
             records.append(
@@ -113,7 +132,7 @@ class IrregularActionFormer(BaseDetector):
                     postprocess_axis=postprocess_axis,
                     label=int(label.item()),
                     score=round(float(score.item()), 6),
-                    segment_axis=[round(float(item), 6) for item in segment_axis.tolist()],
+                    segment_axis=[round(float(item), 6) for item in segment_coords.tolist()],
                     segment_seconds=[round(float(item), 6) for item in segment_seconds.tolist()],
                 )
             )
@@ -358,6 +377,7 @@ class IrregularActionFormer(BaseDetector):
         results = {}
         for i in range(len(metas)):
             self._assert_axis_contract(metas[i], stage="post_processing")
+            _, proposal_axis, postprocess_axis = self._axis_contract_from_meta(metas[i])
             segments = rpn_proposals[i].detach().cpu()
             scores = rpn_scores[i].detach().cpu()
 
@@ -379,6 +399,7 @@ class IrregularActionFormer(BaseDetector):
                 scores = pred_prob
                 labels = cls_idxs
 
+            segments = self._segments_to_axis(segments, metas[i], proposal_axis, postprocess_axis)
             if post_cfg.sliding_window is False and post_cfg.nms is not None:
                 segments, scores, labels = batched_nms(segments, scores, labels, **post_cfg.nms)
 
@@ -390,9 +411,10 @@ class IrregularActionFormer(BaseDetector):
                     labels,
                     metas[i],
                     topk=debug_dump_topk,
+                    segment_axis=postprocess_axis,
                 )
                 self._write_proposal_axis_debug_records(debug_dump_path, debug_records)
-            segments = convert_to_seconds(segments, metas[i])
+            segments = self._segments_to_seconds(segments, metas[i], postprocess_axis)
 
             if isinstance(ext_cls, list):
                 labels = [ext_cls[label.item()] for label in labels]

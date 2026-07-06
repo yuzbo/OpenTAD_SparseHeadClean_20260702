@@ -726,10 +726,12 @@ def test_absrange_expanded_waiter_only_launches_after_old_gpu1_step_clears():
 def test_loadframes_records_explicit_axis_contract_metadata():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
-    assert 'axis = "selected" if self.remap_gt_to_selected_axis else "native"' in load_frames_impl
-    assert 'results["irregular_gt_axis"] = axis' in load_frames_impl
-    assert 'results["irregular_proposal_axis"] = axis' in load_frames_impl
-    assert 'results["irregular_postprocess_axis"] = axis' in load_frames_impl
+    assert 'gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"' in load_frames_impl
+    assert 'proposal_axis = gt_axis' in load_frames_impl
+    assert 'postprocess_axis = "native"' in load_frames_impl
+    assert 'results["irregular_gt_axis"] = gt_axis' in load_frames_impl
+    assert 'results["irregular_proposal_axis"] = proposal_axis' in load_frames_impl
+    assert 'results["irregular_postprocess_axis"] = postprocess_axis' in load_frames_impl
     assert 'results["irregular_axis_contract"]' in load_frames_impl
 
 
@@ -742,6 +744,16 @@ def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dum
     assert "debug_dump_proposals" in detector_impl
     assert "proposal_axis" in detector_impl
     assert "postprocess_axis" in detector_impl
+    assert "def _segments_to_axis(" in detector_impl
+    assert "def _segments_to_seconds(" in detector_impl
+
+
+def test_irregular_actionformer_converts_selected_axis_before_nms():
+    detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
+
+    assert "selected_axis_to_dense_axis" in detector_impl
+    assert "segments = self._segments_to_axis(" in detector_impl
+    assert detector_impl.index("segments = self._segments_to_axis(") < detector_impl.index("batched_nms(")
 
 
 def test_irregular_actionformer_selected_axis_grid_uses_selected_indices_not_native_positions():
@@ -769,9 +781,17 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
         irregular_proposal_axis="selected",
         irregular_postprocess_axis="native",
     )
+    selected_to_native_meta = dict(
+        irregular_native_axis=False,
+        irregular_gt_axis="selected",
+        irregular_proposal_axis="selected",
+        irregular_postprocess_axis="native",
+    )
 
     assert model._axis_contract_from_meta(good_meta) == ("native", "native", "native")
     model._assert_axis_contract(good_meta, stage="test")
+    assert model._axis_contract_from_meta(selected_to_native_meta) == ("selected", "selected", "native")
+    model._assert_axis_contract(selected_to_native_meta, stage="test")
     with pytest.raises(ValueError, match="axis contract"):
         model._assert_axis_contract(bad_meta, stage="test")
 

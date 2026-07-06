@@ -657,14 +657,16 @@ class LoadFrames:
         results["irregular_selected_positions"] = np.asarray(kept_positions, dtype=np.float32) / scale
         results["irregular_selected_valid_len"] = float(valid_len) / scale
         results["irregular_native_axis"] = bool(not self.remap_gt_to_selected_axis)
-        axis = "selected" if self.remap_gt_to_selected_axis else "native"
-        results["irregular_gt_axis"] = axis
-        results["irregular_proposal_axis"] = axis
-        results["irregular_postprocess_axis"] = axis
+        gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"
+        proposal_axis = gt_axis
+        postprocess_axis = "native"
+        results["irregular_gt_axis"] = gt_axis
+        results["irregular_proposal_axis"] = proposal_axis
+        results["irregular_postprocess_axis"] = postprocess_axis
         results["irregular_axis_contract"] = dict(
-            gt_axis=axis,
-            proposal_axis=axis,
-            postprocess_axis=axis,
+            gt_axis=gt_axis,
+            proposal_axis=proposal_axis,
+            postprocess_axis=postprocess_axis,
         )
 
     def _oracle_subsample_window(self, dense_frame_idxs, gt_segments, gt_labels, target_frame_num, profile):
