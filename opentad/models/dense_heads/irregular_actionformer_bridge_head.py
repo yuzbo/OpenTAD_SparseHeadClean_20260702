@@ -40,6 +40,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
         allow_legacy_full_cell_span=False,
+        allow_center_fallback_inside_gt=False,
         filter_similar_gt=True,
         cls_loss_weight=1.0,
         reg_loss_weight=None,
@@ -73,6 +74,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         self.center_radius_scale = center_radius_scale
         self.reg_denom_mode = reg_denom_mode
         self.allow_legacy_full_cell_span = bool(allow_legacy_full_cell_span)
+        self.allow_center_fallback_inside_gt = bool(allow_center_fallback_inside_gt)
         self.filter_similar_gt = filter_similar_gt
         self.cls_loss_weight = cls_loss_weight
         self.reg_loss_weight = reg_loss_weight
@@ -505,7 +507,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         candidate_mask = center_seg.min(dim=-1).values > 0
 
         missing_gt = ~candidate_mask.any(dim=0)
-        if missing_gt.any():
+        if missing_gt.any() and self.allow_center_fallback_inside_gt:
             candidate_mask[:, missing_gt] = inside_gt_seg[:, missing_gt]
         return candidate_mask
 

@@ -61,7 +61,14 @@ class IrregularPointGeneratorV2(IrregularPointGenerator):
         overlap_factor=0.5,
         decode_scale_mode="cell",
         radius_scale_mode="geometric_mean",
+        dense_compat_mode=None,
     ):
+        if dense_compat_mode is not None:
+            if dense_compat_mode != "official_actionformer":
+                raise ValueError(f"Unsupported dense_compat_mode: {dense_compat_mode}")
+            range_mode = "absolute"
+            decode_scale_mode = "level_stride"
+            radius_scale_mode = "level_stride"
         super().__init__(
             strides=strides,
             regression_range=regression_range,
@@ -71,6 +78,7 @@ class IrregularPointGeneratorV2(IrregularPointGenerator):
         )
         self.decode_scale_mode = decode_scale_mode
         self.radius_scale_mode = radius_scale_mode
+        self.dense_compat_mode = dense_compat_mode
 
     def _constant_scale(self, center, value):
         return torch.full_like(center, float(value)).clamp_min(1e-6)

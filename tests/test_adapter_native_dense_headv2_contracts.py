@@ -324,16 +324,19 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert hard_linear.model.rpn_head.center_radius_scale == "full_cell_span"
     assert hard_linear.model.rpn_head.reg_denom_mode == "full_cell_span"
     assert hard_linear.model.rpn_head.allow_legacy_full_cell_span is True
+    assert hard_linear.model.rpn_head.allow_center_fallback_inside_gt is True
     assert "hard_linear_n16r4" in hard_linear.work_dir
 
     assert hard_log.model.rpn_head.assignment_mode == "hard"
     assert hard_log.model.rpn_head.regression_mode == "asymmetric_log1p"
     assert hard_log.model.rpn_head.allow_legacy_full_cell_span is True
+    assert hard_log.model.rpn_head.allow_center_fallback_inside_gt is True
     assert "hard_log_n16r4" in hard_log.work_dir
 
     assert soft_topk1.model.rpn_head.assignment_mode == "soft"
     assert soft_topk1.model.rpn_head.regression_mode == "symmetric_linear"
     assert soft_topk1.model.rpn_head.allow_legacy_full_cell_span is True
+    assert soft_topk1.model.rpn_head.allow_center_fallback_inside_gt is True
     assert int(soft_topk1.model.rpn_head.soft_assign_topk) == 1
     assert soft_topk1.model.rpn_head.soft_reg_weight_mode == "binary"
     assert soft_topk1.model.rpn_head.soft_cls_target_mode == "binary"
@@ -345,6 +348,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert openrange.model.rpn_head.center_radius_scale == "full_cell_span"
     assert openrange.model.rpn_head.reg_denom_mode == "full_cell_span"
     assert openrange.model.rpn_head.allow_legacy_full_cell_span is True
+    assert openrange.model.rpn_head.allow_center_fallback_inside_gt is True
     assert openrange.model.rpn_head.prior_generator.range_mode == "open"
     assert all(tuple(item) == (0, 10000) for item in openrange.model.rpn_head.prior_generator.regression_range)
     assert "hard_linear_openrange_n16r4" in openrange.work_dir
@@ -354,6 +358,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange.model.rpn_head.center_radius_scale == "full_cell_span"
     assert absrange.model.rpn_head.reg_denom_mode == "full_cell_span"
     assert absrange.model.rpn_head.allow_legacy_full_cell_span is True
+    assert absrange.model.rpn_head.allow_center_fallback_inside_gt is True
     assert absrange.model.rpn_head.prior_generator.range_mode == "absolute"
     assert tuple(absrange.model.rpn_head.prior_generator.regression_range[2]) == (8, 16)
     assert "hard_linear_absrange_n16r4" in absrange.work_dir
@@ -363,6 +368,8 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_radiuslevel.model.rpn_head.center_radius_scale == "point_radius"
     assert absrange_radiuslevel.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert absrange_radiuslevel.model.rpn_head.allow_legacy_full_cell_span is False
+    assert absrange_radiuslevel.model.rpn_head.allow_center_fallback_inside_gt is False
+    assert absrange_radiuslevel.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_radiuslevel.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -374,6 +381,7 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert levelstride.model.rpn_head.center_radius_scale == "point_radius"
     assert levelstride.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert levelstride.model.rpn_head.allow_legacy_full_cell_span is False
+    assert levelstride.model.rpn_head.allow_center_fallback_inside_gt is False
     assert levelstride.model.rpn_head.prior_generator.range_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert levelstride.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -384,6 +392,8 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert absrange_expanded.model.rpn_head.center_radius_scale == "point_radius"
     assert absrange_expanded.model.rpn_head.reg_denom_mode == "left_right_mean"
     assert absrange_expanded.model.rpn_head.allow_legacy_full_cell_span is False
+    assert absrange_expanded.model.rpn_head.allow_center_fallback_inside_gt is False
+    assert absrange_expanded.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
     assert absrange_expanded.model.rpn_head.prior_generator.range_mode == "absolute"
     assert absrange_expanded.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
     assert absrange_expanded.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
@@ -404,6 +414,9 @@ def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
     assert "center_radius_scale=\"point_radius\"" in bridge_impl
     assert "reg_denom_mode=\"left_right_mean\"" in bridge_impl
     assert "allow_legacy_full_cell_span=False" in bridge_impl
+    assert "allow_center_fallback_inside_gt=False" in bridge_impl
+    assert "self.allow_center_fallback_inside_gt = bool(allow_center_fallback_inside_gt)" in bridge_impl
+    assert "missing_gt.any() and self.allow_center_fallback_inside_gt" in bridge_impl
     assert "Legacy full-cell-span bridge scales require allow_legacy_full_cell_span=True" in bridge_impl
     assert "def _scale_base(" in bridge_impl
     assert "def _point_fields_extended(" in bridge_impl
@@ -429,6 +442,7 @@ def test_bridge_corrected_derivative_configs_clear_legacy_scale_opt_in():
         assert head.center_radius_scale == "point_radius"
         assert head.reg_denom_mode == "left_right_mean"
         assert head.allow_legacy_full_cell_span is False
+        assert head.allow_center_fallback_inside_gt is False
 
 
 def test_early_bridge_exploration_configs_make_scale_contract_explicit():
@@ -449,6 +463,7 @@ def test_early_bridge_exploration_configs_make_scale_contract_explicit():
         assert head.center_radius_scale == "point_radius", config_path
         assert head.reg_denom_mode == "left_right_mean", config_path
         assert head.allow_legacy_full_cell_span is False, config_path
+        assert head.allow_center_fallback_inside_gt is False, config_path
 
 
 def test_sparse_head_assignment_audit_tool_contract():
@@ -457,6 +472,17 @@ def test_sparse_head_assignment_audit_tool_contract():
     assert "def segment_iou(" in script
     assert "def axis_segments_to_native(" in script
     assert "def axis_segments_to_seconds(" in script
+    assert "def build_official_dense_targets(" in script
+    assert "def compare_current_targets_to_official_dense(" in script
+    assert "official_vs_current_assignment_diff" in script
+    assert "positive_mask_diff_count" in script
+    assert "assigned_class_diff_count" in script
+    assert "encoded_target_max_abs_diff" in script
+    assert "decoded_target_iou" in script
+    assert "decoded_target_max_abs_diff" in script
+    assert "official_per_level_positive_count" in script
+    assert "current_per_level_positive_count" in script
+    assert "gt_coverage_diff" in script
     assert "assigned_positive_target_decode_iou" in script
     assert "oracle_assigned_recall@IoU" in script
     assert "sample_id" in script
@@ -513,6 +539,51 @@ def test_sparse_head_assignment_segment_iou_handles_pairwise_and_matrix_on_linux
     assert matrix.shape == (2, 3)
     assert torch.allclose(matrix[0], torch.tensor([5.0 / 15.0, 0.0, 0.0]))
     assert torch.allclose(matrix[1], torch.tensor([0.0, 1.0, 0.0]))
+
+
+def test_sparse_head_assignment_audit_official_diff_zero_for_identical_targets_on_linux():
+    torch = import_torch_or_skip()
+    pytest.importorskip("mmengine.config")
+    audit = load_module("tools/audit_sparse_head_assignment.py", "assignment_audit_official_diff")
+
+    head = SimpleNamespace(
+        num_classes=3,
+        center_sample="radius",
+        center_sample_radius=1.5,
+        filter_similar_gt=True,
+        regression_mode="symmetric_linear",
+        reg_denom_mode="left_right_mean",
+    )
+    point = torch.tensor(
+        [
+            [1.0, 0.0, 10000.0, 1.0, 1.0, 1.0, 1.0],
+            [3.0, 0.0, 10000.0, 1.0, 1.0, 1.0, 1.0],
+            [8.0, 0.0, 10000.0, 1.0, 1.0, 1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    gt_segment = torch.tensor([[0.0, 4.0]], dtype=torch.float32)
+    gt_label = torch.tensor([1], dtype=torch.long)
+    official = audit.build_official_dense_targets(head, point, gt_segment, gt_label)
+
+    diff = audit.compare_current_targets_to_official_dense(
+        head,
+        point,
+        gt_segment,
+        gt_label,
+        official["cls_targets"],
+        official["reg_targets"],
+        official["positive_mask"].float(),
+        [(0, 3)],
+    )
+
+    assert diff["ok"] is True
+    assert diff["positive_mask_diff_count"] == 0
+    assert diff["assigned_class_diff_count"] == 0
+    assert diff["encoded_target_max_abs_diff"] == 0.0
+    assert diff["decoded_target_max_abs_diff"] == 0.0
+    assert diff["official_per_level_positive_count"] == diff["current_per_level_positive_count"]
+    assert not any(item["differs"] for item in diff["gt_coverage_diff"])
 
 
 def test_detection_quality_analyzer_reports_high_iou_recall_and_boundary_error(tmp_path):
@@ -873,7 +944,7 @@ def test_bridge_head_half_cell_scale_mode_on_linux():
 
 
 def test_bridge_head_default_and_legacy_scale_contract_on_linux():
-    import_torch_or_skip()
+    torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")
     bridge_head = pytest.importorskip("opentad.models.dense_heads.irregular_actionformer_bridge_head")
     config_dict = mmengine_config.ConfigDict
@@ -896,6 +967,7 @@ def test_bridge_head_default_and_legacy_scale_contract_on_linux():
     assert default_head.center_radius_scale == "point_radius"
     assert default_head.reg_denom_mode == "left_right_mean"
     assert default_head.allow_legacy_full_cell_span is False
+    assert default_head.allow_center_fallback_inside_gt is False
 
     with pytest.raises(ValueError, match="allow_legacy_full_cell_span=True"):
         bridge_head.IrregularActionFormerBridgeHead(
@@ -909,8 +981,25 @@ def test_bridge_head_default_and_legacy_scale_contract_on_linux():
         center_radius_scale="full_cell_span",
         reg_denom_mode="full_cell_span",
         allow_legacy_full_cell_span=True,
+        allow_center_fallback_inside_gt=True,
     )
     assert legacy_head.allow_legacy_full_cell_span is True
+    assert legacy_head.allow_center_fallback_inside_gt is True
+
+    point = torch.tensor(
+        [
+            [1.0, 0.0, 10000.0, 1.0, 1.0, 1.0, 1.0],
+            [9.0, 0.0, 10000.0, 1.0, 1.0, 1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    gt_segs = torch.tensor([[[0.0, 10.0]], [[0.0, 10.0]]], dtype=torch.float32)
+    reg_targets = torch.tensor([[[1.0, 9.0]], [[9.0, 1.0]]], dtype=torch.float32)
+
+    default_head.center_sample_radius = 0.05
+    legacy_head.center_sample_radius = 0.05
+    assert default_head._build_candidate_mask(point, gt_segs, reg_targets).sum().item() == 0
+    assert legacy_head._build_candidate_mask(point, gt_segs, reg_targets).sum().item() == 2
 
 
 def test_bridge_hard_uniform_grid_matches_official_dense_target_contract_on_linux():
@@ -1189,6 +1278,54 @@ def test_current_configs_do_not_enable_bata_diagnostic_eval_shortcuts():
         assert "diagnostic_only=True" not in text
 
 
+def test_fail_closed_config_scanner_allows_disabled_shortcuts(tmp_path):
+    pytest.importorskip("mmengine.config")
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_safe")
+
+    cfg_path = tmp_path / "safe_config.py"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "dataset = dict(val=dict(pipeline=[dict(type='LoadFrames', bata_allow_diagnostic_gt_cache=False)]))",
+                "inference = dict(load_from_raw_predictions=False)",
+                "post_processing = dict(load_predictions=False, fuse_list=[])",
+                "model = dict(teacher_cache=None, prediction_cache_shortcut='')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert scanner.scan_config_file(cfg_path) == []
+
+
+def test_fail_closed_config_scanner_rejects_eval_shortcuts(tmp_path):
+    pytest.importorskip("mmengine.config")
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_unsafe")
+
+    cfg_path = tmp_path / "unsafe_config.py"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "dataset = dict(val=dict(pipeline=[dict(type='LoadFrames', bata_allow_diagnostic_gt_cache=True)]))",
+                "inference = dict(load_from_raw_predictions=True)",
+                "post_processing = dict(load_predictions=True, fuse_list=['a.pkl'])",
+                "model = dict(teacher_cache='teacher.pt', prediction_cache_shortcut='cache.pkl')",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    violations = scanner.scan_config_file(cfg_path)
+    paths = {item["path"] for item in violations}
+
+    assert "cfg.dataset.val.pipeline[0].bata_allow_diagnostic_gt_cache" in paths
+    assert "cfg.inference.load_from_raw_predictions" in paths
+    assert "cfg.post_processing.load_predictions" in paths
+    assert "cfg.post_processing.fuse_list" in paths
+    assert "cfg.model.teacher_cache" in paths
+    assert "cfg.model.prediction_cache_shortcut" in paths
+
+
 def test_loadframes_selected_axis_remap_does_not_create_tiny_collapsed_gt_targets():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
@@ -1277,13 +1414,25 @@ def test_selected_axis_fractional_roundtrip_matches_native_seconds_on_linux():
 
     native_segments = post_utils.selected_axis_to_dense_axis(selected_segments, meta)
     selected_to_seconds = post_utils.convert_to_seconds(selected_segments.clone(), meta)
+    selected_to_seconds_explicit = post_utils.convert_to_seconds(
+        selected_segments.clone(),
+        meta,
+        source_axis="selected",
+    )
     native_meta = dict(meta, irregular_native_axis=True)
     native_to_seconds = post_utils.convert_to_seconds(native_segments.clone(), native_meta)
+    native_to_seconds_with_selected_meta = post_utils.convert_to_seconds(
+        native_segments.clone(),
+        meta,
+        source_axis="native",
+    )
 
     assert torch.allclose(native_segments, expected_native)
     assert not torch.allclose(selected_segments, native_segments)
     assert torch.allclose(selected_to_seconds, expected_seconds)
+    assert torch.allclose(selected_to_seconds_explicit, expected_seconds)
     assert torch.allclose(native_to_seconds, expected_seconds)
+    assert torch.allclose(native_to_seconds_with_selected_meta, expected_seconds)
     assert torch.allclose(selected_to_seconds, native_to_seconds)
 
 
@@ -1411,6 +1560,59 @@ def test_irregular_actionformer_selected_axis_post_processing_nms_uses_native_ax
     ]
 
 
+def test_irregular_actionformer_single_class_post_processing_applies_pre_nms_filter_on_linux(monkeypatch):
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.irregular_actionformer")
+
+    captured = {}
+
+    def fake_batched_nms(segments, scores, labels, **kwargs):
+        captured["segments"] = segments.clone()
+        captured["scores"] = scores.clone()
+        captured["labels"] = labels.clone()
+        return segments, scores, labels
+
+    monkeypatch.setattr(detector, "batched_nms", fake_batched_nms)
+    model = object.__new__(detector.IrregularActionFormer)
+    meta = dict(
+        video_name="video_single_class",
+        fps=1.0,
+        snippet_stride=1.0,
+        offset_frames=0.0,
+        window_start_frame=0.0,
+        duration=20.0,
+        irregular_native_axis=True,
+        irregular_gt_axis="native",
+        irregular_proposal_axis="native",
+        irregular_postprocess_axis="native",
+    )
+
+    results = model.post_processing(
+        predictions=(
+            [
+                torch.tensor(
+                    [[0.0, 1.0], [1.0, 2.0], [2.0, 3.0], [3.0, 4.0]],
+                    dtype=torch.float32,
+                )
+            ],
+            [torch.tensor([[0.2], [0.9], [0.05], [0.7]], dtype=torch.float32)],
+        ),
+        metas=[meta],
+        post_cfg=SimpleNamespace(
+            pre_nms_thresh=0.1,
+            pre_nms_topk=1,
+            sliding_window=False,
+            nms={},
+        ),
+        ext_cls=["action"],
+    )
+
+    assert torch.allclose(captured["segments"], torch.tensor([[1.0, 2.0]]))
+    assert torch.allclose(captured["scores"], torch.tensor([0.9]))
+    assert captured["labels"].tolist() == [0]
+    assert results["video_single_class"] == [dict(segment=[1.0, 2.0], label="action", score=0.9)]
+
+
 def test_official_dense_reference_verifier_tracks_upstream_opentad_sources():
     script = read("scripts/verify_official_dense_reference.py")
 
@@ -1457,6 +1659,7 @@ def test_official_dense_selected_axis_sanity_uses_selected_proposals_native_post
     assert "selected_axis_to_dense_axis" in detector_impl
     assert "segments = self._segments_to_axis(" in detector_impl
     assert detector_impl.index("segments = self._segments_to_axis(") < detector_impl.index("batched_nms(")
+    assert "convert_to_seconds(segments, meta, source_axis=source_axis)" in detector_impl
 
 
 def test_official_dense_selected_axis_precheck_is_fail_closed_and_non_training():
@@ -1577,6 +1780,45 @@ def test_irregular_point_generator_v2_absolute_range_does_not_scale_on_linux():
     assert torch.allclose(points[..., 2], torch.full((1, 3), 16.0))
     assert torch.allclose(points[..., 3], grid["cell_left"])
     assert torch.allclose(points[..., 4], grid["cell_right"])
+
+
+def test_irregular_point_generator_v2_official_dense_compat_mode_locks_scales_on_linux():
+    torch = import_torch_or_skip()
+    point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
+
+    generator = point_generator.IrregularPointGeneratorV2(
+        strides=[4],
+        regression_range=[(8, 16)],
+        range_mode="hard",
+        decode_scale_mode="cell",
+        radius_scale_mode="geometric_mean",
+        dense_compat_mode="official_actionformer",
+    )
+    feat = torch.zeros(1, 1, 3)
+    grid = {
+        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "cell_left": torch.tensor([[2.0, 4.0, 8.0]]),
+        "cell_right": torch.tensor([[3.0, 5.0, 9.0]]),
+    }
+
+    points = generator([feat], [grid])[0]
+
+    assert generator.range_mode == "absolute"
+    assert generator.decode_scale_mode == "level_stride"
+    assert generator.radius_scale_mode == "level_stride"
+    assert torch.allclose(points[..., 1], torch.full((1, 3), 8.0))
+    assert torch.allclose(points[..., 2], torch.full((1, 3), 16.0))
+    assert torch.allclose(points[..., 3], torch.full((1, 3), 4.0))
+    assert torch.allclose(points[..., 4], torch.full((1, 3), 4.0))
+    assert torch.allclose(points[..., 5], torch.ones((1, 3)))
+    assert torch.allclose(points[..., 6], torch.full((1, 3), 4.0))
+
+    with pytest.raises(ValueError, match="Unsupported dense_compat_mode"):
+        point_generator.IrregularPointGeneratorV2(
+            strides=[4],
+            regression_range=[(8, 16)],
+            dense_compat_mode="unknown",
+        )
 
 
 def test_temporal_grid_explicit_cells_are_preserved_on_linux():

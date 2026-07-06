@@ -14,6 +14,7 @@ model = dict(
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
         allow_legacy_full_cell_span=False,
+        allow_center_fallback_inside_gt=False,
         cls_prior_prob=0.01,
         loss_normalizer=100,
         loss_normalizer_momentum=0.9,

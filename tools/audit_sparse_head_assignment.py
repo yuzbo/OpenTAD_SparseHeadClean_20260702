@@ -144,9 +144,7 @@ def axis_segments_to_native(segments, meta, source_axis):
 
 
 def axis_segments_to_seconds(segments, meta, source_axis):
-    seconds_meta = dict(meta or {})
-    seconds_meta["irregular_native_axis"] = source_axis == "native"
-    return convert_to_seconds(segments.clone(), seconds_meta)
+    return convert_to_seconds(segments.clone(), meta or {}, source_axis=source_axis)
 
 
 def scalar_list(values):
@@ -244,6 +242,192 @@ def decode_encoded_targets(head, encoded, left_scale, right_scale, point_scale, 
         )
         return encoded[:, 0] * denom, encoded[:, 1] * denom
     return torch.expm1(encoded[:, 0].clamp_min(0.0)) * left_scale, torch.expm1(encoded[:, 1].clamp_min(0.0)) * right_scale
+
+
+def _class_from_targets(cls_targets):
+    pos = cls_targets.sum(dim=-1) > 0
+    cls_idx = cls_targets.argmax(dim=-1)
+    return torch.where(pos, cls_idx, torch.full_like(cls_idx, -1))
+
+
+def _linear_decode_segments(encoded, point):
+    center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = point_fields(None, point)
+    denom = 0.5 * (left_scale + right_scale).clamp_min(1e-6)
+    left = encoded[:, 0] * denom
+    right = encoded[:, 1] * denom
+    return torch.stack((center_t - left, center_t + right), dim=-1)
+
+
+@torch.no_grad()
+def build_official_dense_targets(head, point, gt_segment, gt_label):
+    center_t, reg_min, reg_max, left_scale, right_scale, point_scale, range_scale, radius_scale = point_fields(
+        head, point
+    )
+    num_pts = int(point.shape[0])
+    num_classes = int(getattr(head, "num_classes", int(gt_label.max().item() + 1) if gt_label.numel() else 1))
+    result = {
+        "cls_targets": gt_segment.new_zeros((num_pts, num_classes)),
+        "reg_targets": gt_segment.new_zeros((num_pts, 2)),
+        "positive_mask": torch.zeros((num_pts,), device=point.device, dtype=torch.bool),
+        "assigned_gt": torch.full((num_pts,), -1, device=point.device, dtype=torch.long),
+        "assigned_class": torch.full((num_pts,), -1, device=point.device, dtype=torch.long),
+    }
+    num_gts = int(gt_segment.shape[0])
+    if num_gts == 0:
+        return result
+
+    gt_segs = gt_segment[None].expand(num_pts, num_gts, 2)
+    left = center_t[:, None] - gt_segs[:, :, 0]
+    right = gt_segs[:, :, 1] - center_t[:, None]
+    raw_reg_targets = torch.stack((left, right), dim=-1)
+
+    if getattr(head, "center_sample", "radius") == "radius":
+        center_pts = 0.5 * (gt_segs[:, :, 0] + gt_segs[:, :, 1])
+        official_radius_scale = radius_scale[:, None].clamp_min(1e-6)
+        radius = official_radius_scale * float(getattr(head, "center_sample_radius", 1.5))
+        t_mins = center_pts - radius
+        t_maxs = center_pts + radius
+        cb_left = center_t[:, None] - torch.maximum(t_mins, gt_segs[:, :, 0])
+        cb_right = torch.minimum(t_maxs, gt_segs[:, :, 1]) - center_t[:, None]
+        inside_gt = torch.stack((cb_left, cb_right), dim=-1).min(dim=-1).values > 0
+    else:
+        inside_gt = raw_reg_targets.min(dim=-1).values > 0
+
+    max_regress_distance = raw_reg_targets.max(dim=-1).values
+    inside_range = torch.logical_and(max_regress_distance >= reg_min[:, None], max_regress_distance <= reg_max[:, None])
+    gt_len = (gt_segment[:, 1] - gt_segment[:, 0])[None, :].repeat(num_pts, 1)
+    gt_len = gt_len.masked_fill(~inside_gt, float("inf"))
+    gt_len = gt_len.masked_fill(~inside_range, float("inf"))
+    min_len, min_idx = gt_len.min(dim=1)
+    positive_mask = torch.isfinite(min_len)
+
+    if getattr(head, "filter_similar_gt", True):
+        min_len_mask = torch.logical_and(gt_len <= (min_len[:, None] + 1e-3), gt_len < float("inf"))
+    else:
+        min_len_mask = gt_len < float("inf")
+    gt_label_one_hot = torch.nn.functional.one_hot(gt_label.long(), num_classes).to(gt_segment.dtype)
+    cls_targets = min_len_mask.to(gt_segment.dtype) @ gt_label_one_hot
+    cls_targets.clamp_(min=0.0, max=1.0)
+
+    denom = 0.5 * (left_scale + right_scale).clamp_min(1e-6)
+    encoded_all = torch.stack((left / denom[:, None], right / denom[:, None]), dim=-1).clamp_min(0.0)
+    reg_targets = encoded_all[torch.arange(num_pts, device=point.device), min_idx]
+    reg_targets = torch.where(positive_mask[:, None], reg_targets, reg_targets.new_zeros(reg_targets.shape))
+
+    result["cls_targets"] = cls_targets
+    result["reg_targets"] = reg_targets
+    result["positive_mask"] = positive_mask
+    result["assigned_gt"] = torch.where(positive_mask, min_idx, torch.full_like(min_idx, -1))
+    result["assigned_class"] = _class_from_targets(cls_targets)
+    return result
+
+
+def _per_level_counts(mask, offsets):
+    return [int(mask[lo:hi].sum().item()) for lo, hi in offsets]
+
+
+def _gt_coverage_bitmap(assigned_gt, num_gts, offsets):
+    return [
+        [bool((assigned_gt[lo:hi] == gt_idx).any().item()) for lo, hi in offsets]
+        for gt_idx in range(num_gts)
+    ]
+
+
+@torch.no_grad()
+def compare_current_targets_to_official_dense(
+    head,
+    point,
+    gt_segment,
+    gt_label,
+    current_cls_targets,
+    current_reg_targets,
+    current_reg_weight,
+    offsets,
+):
+    official = build_official_dense_targets(head, point, gt_segment, gt_label)
+    current_positive_mask = current_cls_targets.sum(dim=-1) > 0
+    if current_reg_weight is not None:
+        current_positive_mask = torch.logical_or(current_positive_mask, current_reg_weight > 0)
+    official_positive_mask = official["positive_mask"]
+    positive_diff = torch.logical_xor(current_positive_mask, official_positive_mask)
+
+    current_class = _class_from_targets(current_cls_targets)
+    official_class = official["assigned_class"]
+    class_diff = torch.logical_and(
+        torch.logical_or(current_positive_mask, official_positive_mask),
+        current_class != official_class,
+    )
+    common_positive = torch.logical_and(current_positive_mask, official_positive_mask)
+
+    encoded_diff_values = (current_reg_targets[common_positive] - official["reg_targets"][common_positive]).abs()
+    encoded_target_max_abs_diff = max_or_none(encoded_diff_values)
+
+    decoded_target_iou = None
+    decoded_target_max_abs_diff = None
+    if common_positive.any():
+        current_point = point[common_positive]
+        (
+            _,
+            _,
+            _,
+            left_scale,
+            right_scale,
+            point_scale,
+            range_scale,
+            radius_scale,
+        ) = point_fields(head, current_point)
+        cur_left, cur_right = decode_encoded_targets(
+            head,
+            current_reg_targets[common_positive],
+            left_scale,
+            right_scale,
+            point_scale,
+            range_scale=range_scale,
+            radius_scale=radius_scale,
+        )
+        center_t = current_point[:, 0]
+        current_decoded = torch.stack((center_t - cur_left, center_t + cur_right), dim=-1)
+        official_decoded = _linear_decode_segments(official["reg_targets"][common_positive], current_point)
+        decoded_iou_values = segment_iou(current_decoded, official_decoded, pairwise=True)
+        decoded_target_iou = iou_summary(decoded_iou_values)
+        decoded_target_max_abs_diff = max_or_none((current_decoded - official_decoded).abs())
+    else:
+        decoded_target_iou = iou_summary(point.new_empty((0,)))
+
+    current_per_level_positive_count = _per_level_counts(current_positive_mask, offsets)
+    official_per_level_positive_count = _per_level_counts(official_positive_mask, offsets)
+    current_coverage = _gt_coverage_bitmap(build_hard_diagnostics(head, point, gt_segment, offsets)["assigned_gt"], int(gt_segment.shape[0]), offsets)
+    official_coverage = _gt_coverage_bitmap(official["assigned_gt"], int(gt_segment.shape[0]), offsets)
+    gt_coverage_diff = [
+        {
+            "gt_idx": gt_idx,
+            "current_level_bitmap": current_coverage[gt_idx],
+            "official_level_bitmap": official_coverage[gt_idx],
+            "differs": current_coverage[gt_idx] != official_coverage[gt_idx],
+        }
+        for gt_idx in range(int(gt_segment.shape[0]))
+    ]
+
+    return {
+        "ok": bool(
+            int(positive_diff.sum().item()) == 0
+            and int(class_diff.sum().item()) == 0
+            and (encoded_target_max_abs_diff is None or encoded_target_max_abs_diff <= 1e-5)
+            and (decoded_target_max_abs_diff is None or decoded_target_max_abs_diff <= 1e-5)
+            and not any(item["differs"] for item in gt_coverage_diff)
+        ),
+        "positive_mask_diff_count": int(positive_diff.sum().item()),
+        "assigned_class_diff_count": int(class_diff.sum().item()),
+        "encoded_target_max_abs_diff": encoded_target_max_abs_diff,
+        "decoded_target_iou": decoded_target_iou,
+        "decoded_target_max_abs_diff": decoded_target_max_abs_diff,
+        "official_per_level_positive_count": official_per_level_positive_count,
+        "current_per_level_positive_count": current_per_level_positive_count,
+        "per_level_positive_count_diff": [
+            int(cur - off) for cur, off in zip(current_per_level_positive_count, official_per_level_positive_count)
+        ],
+        "gt_coverage_diff": gt_coverage_diff,
+    }
 
 
 @torch.no_grad()
@@ -538,11 +722,12 @@ def audit_config(config_path, batches, split, device):
 
         target = head.prepare_targets(points, gt_segments, gt_labels)
         if len(target) == 4:
-            _, _, reg_weight_list, _ = target
+            gt_cls_list, gt_reg_list, reg_weight_list, _ = target
         else:
+            gt_cls_list, gt_reg_list = target[0], target[1]
             reg_weight_list = [None for _ in gt_segments]
 
-        for sample_idx, (point, gt_segment) in enumerate(zip(point_list, gt_segments)):
+        for sample_idx, (point, gt_segment, gt_label) in enumerate(zip(point_list, gt_segments, gt_labels)):
             meta = metas[sample_idx] if metas is not None else {}
             sample_id = make_sample_id(batch_idx, sample_idx, meta)
             axes = axis_contract(meta)
@@ -555,6 +740,7 @@ def audit_config(config_path, batches, split, device):
             gt_coverage = []
             decode_iou_diag = None
             per_gt_decode_iou = {}
+            official_vs_current_assignment_diff = None
 
             if assignment_mode == "hard":
                 decode_iou_diag = build_assigned_positive_decode_iou(
@@ -566,6 +752,16 @@ def audit_config(config_path, batches, split, device):
                     axes["proposal_axis"],
                 )
                 per_gt_decode_iou = {entry["gt_idx"]: entry for entry in decode_iou_diag["per_gt"]}
+                official_vs_current_assignment_diff = compare_current_targets_to_official_dense(
+                    head,
+                    point,
+                    gt_segment,
+                    gt_label,
+                    gt_cls_list[sample_idx],
+                    gt_reg_list[sample_idx],
+                    reg_weight_list[sample_idx],
+                    offsets,
+                )
 
             for lo, hi in offsets:
                 if reg_weight is not None:
@@ -649,6 +845,8 @@ def audit_config(config_path, batches, split, device):
                     "seconds_axis": decode_iou_diag["seconds_axis"],
                 }
                 row["oracle_assigned_recall@IoU"] = decode_iou_diag["oracle_assigned_recall@IoU"]
+            if official_vs_current_assignment_diff is not None:
+                row["official_vs_current_assignment_diff"] = official_vs_current_assignment_diff
             rows.append(row)
 
     return rows

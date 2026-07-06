@@ -5,7 +5,9 @@ model = dict(
         center_radius_scale="point_radius",
         reg_denom_mode="left_right_mean",
         allow_legacy_full_cell_span=False,
+        allow_center_fallback_inside_gt=False,
         prior_generator=dict(
+            dense_compat_mode="official_actionformer",
             decode_scale_mode="level_stride",
             radius_scale_mode="level_stride",
         ),

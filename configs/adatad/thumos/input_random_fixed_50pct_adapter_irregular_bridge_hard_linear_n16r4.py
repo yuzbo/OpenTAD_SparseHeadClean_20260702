@@ -14,6 +14,7 @@ model = dict(
         center_radius_scale="full_cell_span",
         reg_denom_mode="full_cell_span",
         allow_legacy_full_cell_span=True,
+        allow_center_fallback_inside_gt=True,
         cls_prior_prob=0.01,
         loss_normalizer=100,
         loss_normalizer_momentum=0.9,

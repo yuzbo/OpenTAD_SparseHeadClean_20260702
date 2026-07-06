@@ -138,17 +138,28 @@ def apply_visibility_rescore(scores, segments, meta, cfg=None):
     return scores * factor
 
 
-def convert_to_seconds(segments, meta):
+def convert_to_seconds(segments, meta, source_axis="auto"):
+    if source_axis not in {"auto", "selected", "native"}:
+        raise ValueError(f"Unsupported source_axis for convert_to_seconds: {source_axis}")
+
+    irregular_positions = meta.get("irregular_selected_positions", None)
+    irregular_valid_len = meta.get("irregular_selected_valid_len", None)
+    has_selected_axis_meta = irregular_positions is not None and irregular_valid_len is not None
+    if source_axis == "selected":
+        if has_selected_axis_meta:
+            selected_meta = dict(meta)
+            selected_meta["irregular_native_axis"] = False
+            segments = selected_axis_to_dense_axis(segments, selected_meta)
+    elif source_axis == "auto":
+        if has_selected_axis_meta and not meta.get("irregular_native_axis", False):
+            segments = selected_axis_to_dense_axis(segments, meta)
+
     if meta["fps"] == -1:  # resize setting, like in anet / hacs
         segments = segments / meta["resize_length"] * meta["duration"]
     else:  # sliding window / padding setting, like in thumos / ego4d
         snippet_stride = meta["snippet_stride"]
         offset_frames = meta["offset_frames"]
         window_start_frame = meta["window_start_frame"] if "window_start_frame" in meta.keys() else 0
-        irregular_positions = meta.get("irregular_selected_positions", None)
-        irregular_valid_len = meta.get("irregular_selected_valid_len", None)
-        if irregular_positions is not None and irregular_valid_len is not None and not meta.get("irregular_native_axis", False):
-            segments = selected_axis_to_dense_axis(segments, meta)
         segments = (segments * snippet_stride + window_start_frame + offset_frames) / meta["fps"]
 
     # truncate all boundaries within [0, duration]

@@ -100,9 +100,7 @@ class IrregularActionFormer(BaseDetector):
         raise ValueError(f"Unsupported proposal axis conversion: {source_axis} -> {target_axis}")
 
     def _segments_to_seconds(self, segments, meta, source_axis):
-        seconds_meta = dict(meta)
-        seconds_meta["irregular_native_axis"] = source_axis == "native"
-        return convert_to_seconds(segments, seconds_meta)
+        return convert_to_seconds(segments, meta, source_axis=source_axis)
 
     def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None):
         self._assert_axis_contract(meta, stage="proposal_debug")
@@ -383,7 +381,17 @@ class IrregularActionFormer(BaseDetector):
 
             if num_classes == 1:
                 scores = scores.squeeze(-1)
+                keep_idxs = scores > pre_nms_thresh
+                scores = scores[keep_idxs]
+                segments = segments[keep_idxs]
                 labels = torch.zeros(scores.shape[0], dtype=torch.long).contiguous()
+                num_topk = min(pre_nms_topk, scores.size(0))
+                if num_topk < scores.size(0):
+                    scores, idxs = scores.sort(descending=True)
+                    scores = scores[:num_topk].clone()
+                    idxs = idxs[:num_topk]
+                    segments = segments[idxs].clone()
+                    labels = labels[idxs].clone()
             else:
                 pred_prob = scores.flatten()
                 keep_idxs1 = pred_prob > pre_nms_thresh
