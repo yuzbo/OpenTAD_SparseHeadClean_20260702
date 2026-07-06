@@ -35,6 +35,9 @@ class Stage2Target:
     split: str
     exp_dir: str
     min_average_map: Optional[float] = None
+    require_average_map: bool = True
+    min_quality_num_predictions: int = 1
+    min_quality_recall_030: float = 1e-6
 
 
 TARGETS = (
@@ -133,6 +136,13 @@ def summarize_target(root: Path, target: Stage2Target) -> dict:
     if target.min_average_map is not None and average_map is not None:
         threshold_pass = average_map >= target.min_average_map
 
+    quality_summary = quality.get("summary") if isinstance(quality.get("summary"), dict) else None
+    quality_num_predictions = None
+    quality_recall_030 = None
+    if quality_summary is not None:
+        quality_num_predictions = quality_summary.get("num_predictions")
+        quality_recall_030 = quality_summary.get("recall@0.30")
+
     blocked_reasons = []
     if missing:
         blocked_reasons.append("missing_artifacts")
@@ -140,10 +150,21 @@ def summarize_target(root: Path, target: Stage2Target) -> dict:
         blocked_reasons.append("hard_error")
     if log_summary["exists"] and not log_summary["training_over"]:
         blocked_reasons.append("training_not_over")
-    if target.min_average_map is not None and average_map is None:
+    if target.require_average_map and average_map is None:
         blocked_reasons.append("missing_average_mAP")
     if threshold_pass is False:
         blocked_reasons.append("average_mAP_below_threshold")
+    if quality["exists"] and quality_summary is None:
+        blocked_reasons.append("missing_quality_summary")
+    if quality_summary is not None:
+        if quality_num_predictions is None:
+            blocked_reasons.append("missing_quality_num_predictions")
+        elif int(quality_num_predictions) < target.min_quality_num_predictions:
+            blocked_reasons.append("quality_num_predictions_below_threshold")
+        if quality_recall_030 is None:
+            blocked_reasons.append("missing_quality_recall@0.30")
+        elif float(quality_recall_030) < target.min_quality_recall_030:
+            blocked_reasons.append("quality_recall@0.30_below_threshold")
 
     return {
         "label": target.label,
@@ -153,6 +174,8 @@ def summarize_target(root: Path, target: Stage2Target) -> dict:
         "log": log_summary,
         "quality": quality,
         "min_average_mAP": target.min_average_map,
+        "min_quality_num_predictions": target.min_quality_num_predictions,
+        "min_quality_recall@0.30": target.min_quality_recall_030,
         "threshold_pass": threshold_pass,
         "missing": missing,
         "blocked_reasons": blocked_reasons,

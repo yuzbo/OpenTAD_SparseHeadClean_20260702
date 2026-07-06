@@ -16,7 +16,15 @@ def load_gate_module():
     return module
 
 
-def write_target(root, exp_dir, average_map, training_over=True, quality=True):
+def write_target(
+    root,
+    exp_dir,
+    average_map,
+    training_over=True,
+    quality=True,
+    quality_num_predictions=10,
+    quality_recall_030=0.5,
+):
     path = root / exp_dir
     path.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -31,7 +39,16 @@ def write_target(root, exp_dir, average_map, training_over=True, quality=True):
     (path / "result_detection.json").write_text('{"results": {}}', encoding="utf-8")
     if quality:
         (path / "detection_quality_summary_test.json").write_text(
-            json.dumps({"summary": {"recall@0.70": 0.5, "best_iou_mean": 0.8}}),
+            json.dumps(
+                {
+                    "summary": {
+                        "num_predictions": quality_num_predictions,
+                        "recall@0.30": quality_recall_030,
+                        "recall@0.70": 0.5,
+                        "best_iou_mean": 0.8,
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -70,3 +87,23 @@ def test_stage2_dense_gate_blocks_missing_quality_and_hard_errors(tmp_path):
     assert "missing_artifacts" in row["blocked_reasons"]
     assert "hard_error" in row["blocked_reasons"]
     assert row["log"]["hard_errors"]["traceback"] is True
+
+
+def test_stage2_dense_gate_blocks_short_long_submission_on_empty_quality(tmp_path):
+    gate = load_gate_module()
+    target = next(item for item in gate.TARGETS if item.label == "near63_random_short")
+    write_target(
+        tmp_path,
+        target.exp_dir,
+        average_map=3.0,
+        quality_num_predictions=0,
+        quality_recall_030=0.0,
+    )
+
+    report = gate.summarize_stage2(tmp_path)
+    row = next(item for item in report["targets"] if item["label"] == target.label)
+
+    assert report["overall"]["can_submit_long_after_short"] is False
+    assert row["ok"] is False
+    assert "quality_num_predictions_below_threshold" in row["blocked_reasons"]
+    assert "quality_recall@0.30_below_threshold" in row["blocked_reasons"]

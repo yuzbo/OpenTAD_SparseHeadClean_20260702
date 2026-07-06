@@ -486,3 +486,12 @@ Reference snapshot:
 - Before training starts, the scripts now compute the exact `gpu1_id*` run directory and refuse to proceed if it already exists.
 - Controlled reruns must set `ALLOW_OVERWRITE_STAGE2_OUTPUT=1`; even then, deletion is restricted to the strict whitelist `$ROOT/exps/thumos/adatad/*/gpu1_id*`.
 - Motivation: OpenTAD `log.json` is append-style and `result_detection.json` can remain from an older run. Without this guard, Stage-2 gate summaries could be polluted by stale errors or stale predictions.
+
+## Stage-2 Short Gate Minimum Quality Signal - 2026-07-06
+
+- Tightened `tools/summarize_stage2_dense_gate.py` so `can_submit_long_after_short` is not based on file existence alone.
+- A Stage-2 target now also requires:
+  - a parsed `Average-mAP` entry in `log.json`;
+  - Stage-4 quality summary with `num_predictions >= 1`;
+  - Stage-4 quality summary with `recall@0.30 >= 1e-6`.
+- These are intentionally minimal sanity checks, not near63/near65 performance claims. They block empty-prediction or coordinate-broken short runs from authorizing long Slurm jobs while still allowing low early mAP to be inspected instead of overfitting the gate to two-epoch performance.
