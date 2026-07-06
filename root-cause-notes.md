@@ -463,3 +463,16 @@ Reference snapshot:
   - If training succeeds, the job runs `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` with `REQUIRE_RESULTS=1`.
   - The Stage-4 child unsets `CUDA_VISIBLE_DEVICES`, preserving the CPU-only detection-quality boundary.
 - This does not by itself authorize long training. The gate remains: Stage-2 short smoke must first finish and produce sane dense selected-axis metrics plus Stage-4 quality output; only then should the long Slurm submitter be used.
+
+## Stage-2 Dense Gate Summary - 2026-07-06
+
+- Added `tools/summarize_stage2_dense_gate.py`, a report-only gate summarizer for the Stage-2 dense selected-axis controls.
+  - It inspects each target's `log.json`, `result_detection.json`, and latest `detection_quality_summary_*.json`.
+  - It records `Average-mAP`, per-tIoU mAP, `Training Over`, Traceback/OOM/non-finite-loss flags, non-finite gradient skip count, missing artifacts, and latest quality summary path.
+  - Short targets gate only on successful completion and artifacts by default.
+  - Long targets additionally use conservative thresholds: random-fixed dense selected-axis `Average-mAP >= 60.0`, uniform/equal-interval official dense selected-axis `Average-mAP >= 62.0`. These are go/no-go guardrails, not final paper claims.
+- `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` now writes `${RUN_TAG}_stage2_dense_gate.json` after quality analysis. This provides an immediate machine-readable answer for:
+  - whether short smoke has enough evidence to submit long Slurm jobs;
+  - whether long dense sanity is close enough to the expected near63/near65 band;
+  - whether missing result/quality files or hard errors block interpretation.
+- Local dry run without Stage-2 outputs correctly reports all four Stage-2 targets blocked by missing artifacts and `can_submit_long_after_short=false`.

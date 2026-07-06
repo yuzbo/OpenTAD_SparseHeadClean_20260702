@@ -231,6 +231,7 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
 
     assert "tools/check_fail_closed_config.py" in runner
     assert "tools/analyze_detection_quality.py" in runner
+    assert "tools/summarize_stage2_dense_gate.py" in runner
     assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py" in runner
     assert "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py" in runner
     assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_shortgate_n16r4" in runner
@@ -238,6 +239,7 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
     assert "result_detection.json" in runner
     assert "detection_quality_summary_" in runner
     assert "detection_quality_rows_" in runner
+    assert "stage2_dense_gate.json" in runner
     assert "torchrun" not in runner
     assert "tools/train.py" not in runner
     assert "srun --jobid=1118197" not in runner

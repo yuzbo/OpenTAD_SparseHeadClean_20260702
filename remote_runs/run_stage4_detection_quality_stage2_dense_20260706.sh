@@ -8,6 +8,7 @@ RUN_TAG="${RUN_TAG:-stage4_detection_quality_stage2_dense_$(date +%Y%m%d_%H%M%S)
 REQUIRE_RESULTS="${REQUIRE_RESULTS:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
+GATE_JSON="$LOG_DIR/${RUN_TAG}_stage2_dense_gate.json"
 
 RANDOM_CFG="configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py"
 UNIFORM_CFG="configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
@@ -49,7 +50,7 @@ log_msg "fail-closed config scan"
 log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 log_msg "py_compile preflight"
-"$PYTHON_BIN" -m py_compile tools/analyze_detection_quality.py tools/check_fail_closed_config.py
+"$PYTHON_BIN" -m py_compile tools/analyze_detection_quality.py tools/check_fail_closed_config.py tools/summarize_stage2_dense_gate.py
 
 missing=0
 analyzed=0
@@ -77,6 +78,8 @@ for item in "${TARGETS[@]}"; do
 done
 
 log_msg "summary analyzed=$analyzed missing=$missing"
+"$PYTHON_BIN" tools/summarize_stage2_dense_gate.py --root "$ROOT" --json-out "$GATE_JSON"
+log_msg "gate_json=$GATE_JSON"
 if [[ "$REQUIRE_RESULTS" == "1" && "$analyzed" -eq 0 ]]; then
   echo "No Stage-2 dense result_detection.json files found." >&2
   exit 2
