@@ -13,4 +13,6 @@ model = dict(
     )
 )
 
+post_processing = dict(save_dict=True)
+
 work_dir = "exps/thumos/adatad/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4"

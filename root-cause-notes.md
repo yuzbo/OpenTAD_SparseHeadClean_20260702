@@ -132,6 +132,11 @@ Reference snapshot:
   - Added `tools/analyze_detection_quality.py` for post-training high-IoU localization diagnostics. It consumes standard OpenTAD annotation/result JSON files and reports per-GT best IoU, tIoU recall, GT-length bucket coverage, and normalized start/end boundary error. Use this after each completed candidate to separate three failure modes: no proposal near the GT, proposal near the GT but boundary-calibration error, and score/NMS ranking error.
   - The diagnostic script can now resolve GT from an OpenTAD config (`--config ... --dataset-split val`) and auto-select the newest `result_detection.json` below an experiment directory (`--experiment-dir ...`). This is the intended post-training command shape for `absrange_expanded` and the equal-interval controls, because it avoids manual path mistakes once a run finishes.
   - Because several legacy configs still contain stale `/root/autodl-tmp/...` annotation paths while the remote annotation actually lives under `/data/run01/sczc063/yuzibo/thumos14/annotations/thumos_14_anno.json`, `tools/analyze_detection_quality.py` now supports `--ground-truth-fallback`, plus `THUMOS_ANNOTATION` and `THUMOS_ROOT/annotations/thumos_14_anno.json` fallbacks. This prevents post-training diagnostics from failing on a stale config path.
+  - `post_processing.save_dict=True` is now enabled for the diagnostic candidates:
+    - `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`
+    - `input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py`
+    - `input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`
+    Without this, OpenTAD evaluation logs mAP but does not write `result_detection.json`, making the post-training high-IoU quality audit impossible.
   - Added remote launch helpers for the next long run:
     - `remote_runs/run_gpu1_bridge_absrange_expanded_long_20260706.sh`
     - `remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh`

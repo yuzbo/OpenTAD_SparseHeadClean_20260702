@@ -458,6 +458,18 @@ def test_detection_quality_analyzer_uses_existing_gt_fallback_when_config_path_i
     assert resolved == fallback_ann_path
 
 
+def test_detection_quality_candidate_configs_save_result_detection_json():
+    candidates = [
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
+        "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py",
+        "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py",
+    ]
+
+    for rel_path in candidates:
+        cfg = load_mmengine_config_or_skip(rel_path)
+        assert bool(cfg.post_processing.save_dict), rel_path
+
+
 def test_bridge_head_half_cell_scale_mode_on_linux():
     torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")
