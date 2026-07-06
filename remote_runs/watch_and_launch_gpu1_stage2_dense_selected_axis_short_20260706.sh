@@ -11,6 +11,7 @@ GPU_INDEX="${GPU_INDEX:-1}"
 GPU_MEM_FREE_MAX_MIB="${GPU_MEM_FREE_MAX_MIB:-100}"
 SSH_TIMEOUT_SECONDS="${SSH_TIMEOUT_SECONDS:-20}"
 ALLOWED_EXISTING_STEP_REGEX="${ALLOWED_EXISTING_STEP_REGEX:-^1118197\\.(660|batch|extern)$}"
+RUN_SNAPSHOT="${RUN_SNAPSHOT:-0}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-43200}"
 TARGET_LAUNCHER="$ROOT/remote_runs/launch_gpu1_stage2_dense_selected_axis_short_20260706.sh"
@@ -109,7 +110,9 @@ snapshot() {
 }
 
 log_msg "waiter start node=$NODE gpu=$GPU_INDEX target=$TARGET_LAUNCHER"
-snapshot
+if [[ "$RUN_SNAPSHOT" == "1" ]]; then
+  snapshot
+fi
 
 start_epoch="$(date +%s)"
 while true; do
@@ -122,7 +125,9 @@ while true; do
     log_msg "gpu${GPU_INDEX} is free; launching Stage-2 dense selected-axis short validation"
     bash "$TARGET_LAUNCHER"
     sleep 15
-    snapshot
+    if [[ "$RUN_SNAPSHOT" == "1" ]]; then
+      snapshot
+    fi
     log_msg "waiter exit after launch request"
     exit 0
   fi
