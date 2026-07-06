@@ -1,3 +1,6 @@
+import json
+import os
+
 import torch
 
 from ..builder import DETECTORS, build_backbone, build_projection, build_head, build_neck
@@ -39,6 +42,92 @@ class IrregularActionFormer(BaseDetector):
     @property
     def with_rpn_head(self):
         return hasattr(self, "rpn_head") and self.rpn_head is not None
+
+    def _cfg_get(self, cfg, name, default=None):
+        if cfg is None:
+            return default
+        if hasattr(cfg, "get"):
+            return cfg.get(name, default)
+        return getattr(cfg, name, default)
+
+    def _axis_contract_from_meta(self, meta):
+        default_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
+        contract = meta.get("irregular_axis_contract", {}) or {}
+        gt_axis = meta.get("irregular_gt_axis", contract.get("gt_axis", default_axis))
+        proposal_axis = meta.get("irregular_proposal_axis", contract.get("proposal_axis", default_axis))
+        postprocess_axis = meta.get(
+            "irregular_postprocess_axis",
+            contract.get("postprocess_axis", proposal_axis),
+        )
+        return gt_axis, proposal_axis, postprocess_axis
+
+    def _assert_axis_contract(self, meta, stage="runtime"):
+        gt_axis, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
+        axes = (gt_axis, proposal_axis, postprocess_axis)
+        allowed = {"native", "selected"}
+        if any(axis not in allowed for axis in axes):
+            raise ValueError(f"IrregularActionFormer axis contract has unsupported axes at {stage}: {axes}")
+        if len(set(axes)) != 1:
+            raise ValueError(
+                "IrregularActionFormer axis contract mismatch at "
+                f"{stage}: gt_axis={gt_axis}, proposal_axis={proposal_axis}, "
+                f"postprocess_axis={postprocess_axis}"
+            )
+        expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
+        if gt_axis != expected_axis:
+            raise ValueError(
+                "IrregularActionFormer axis contract mismatch at "
+                f"{stage}: irregular_native_axis implies {expected_axis}, got {gt_axis}"
+            )
+
+    def _assert_axis_contracts(self, metas, stage="runtime"):
+        if metas is None:
+            return
+        for meta in metas:
+            self._assert_axis_contract(meta, stage=stage)
+
+    def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100):
+        self._assert_axis_contract(meta, stage="proposal_debug")
+        if segments.numel() == 0:
+            return []
+
+        scores = scores.reshape(-1)
+        labels = labels.reshape(-1) if torch.is_tensor(labels) else torch.as_tensor(labels)
+        topk = min(int(topk), int(scores.numel()))
+        order = torch.argsort(scores, descending=True)[:topk]
+        picked_segments = segments[order].detach().cpu()
+        picked_scores = scores[order].detach().cpu()
+        picked_labels = labels[order].detach().cpu()
+        seconds = convert_to_seconds(picked_segments.clone(), meta)
+        _, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
+
+        records = []
+        for rank, (segment_axis, segment_seconds, score, label) in enumerate(
+            zip(picked_segments, seconds, picked_scores, picked_labels)
+        ):
+            records.append(
+                dict(
+                    video_name=meta.get("video_name", ""),
+                    rank=rank,
+                    proposal_axis=proposal_axis,
+                    postprocess_axis=postprocess_axis,
+                    label=int(label.item()),
+                    score=round(float(score.item()), 6),
+                    segment_axis=[round(float(item), 6) for item in segment_axis.tolist()],
+                    segment_seconds=[round(float(item), 6) for item in segment_seconds.tolist()],
+                )
+            )
+        return records
+
+    def _write_proposal_axis_debug_records(self, dump_path, records):
+        if not dump_path or not records:
+            return
+        dump_dir = os.path.dirname(dump_path)
+        if dump_dir:
+            os.makedirs(dump_dir, exist_ok=True)
+        with open(dump_path, "a", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def _pad_temporal_grid(self, temporal_grid, feat_len, max_len, masks):
         if temporal_grid is None:
@@ -155,15 +244,23 @@ class IrregularActionFormer(BaseDetector):
                 grids.append(self._build_center_grid_from_positions(pos, valid_len, mask))
                 continue
 
-            selected_len = max(min(valid_len, target_len), 1)
-            pos = pos[:selected_len]
-            if pos.numel() < target_len:
-                pad = pos[-1:].repeat(target_len - pos.numel())
-                pos = torch.cat([pos, pad], dim=0)
+            # selected-axis proposals must be emitted on the selected index axis.
+            # The native selected positions stay in meta and are used only by
+            # selected_axis_to_dense_axis() during post-processing.
+            selected_len = max(min(int(pos.numel()), target_len), 1)
+            selected_center = torch.arange(selected_len, device=mask.device, dtype=torch.float32)
+            if selected_center.numel() < target_len:
+                pad = selected_center[-1:].repeat(target_len - selected_center.numel())
+                selected_center = torch.cat([selected_center, pad], dim=0)
 
             fresh = torch.zeros(target_len, device=mask.device, dtype=torch.bool)
             fresh[:selected_len] = True
-            grids.append(normalize_temporal_grid_input({"center": pos[:target_len][None], "fresh_mask": fresh[None]}, mask[None]))
+            grids.append(
+                normalize_temporal_grid_input(
+                    {"center": selected_center[:target_len][None], "fresh_mask": fresh[None]},
+                    mask[None],
+                )
+            )
 
         return {
             "center": torch.cat([grid["center"] for grid in grids], dim=0),
@@ -205,6 +302,7 @@ class IrregularActionFormer(BaseDetector):
 
     def forward_train(self, inputs, masks, metas, gt_segments, gt_labels, temporal_grids=None, **kwargs):
         losses = {}
+        self._assert_axis_contracts(metas, stage="train")
         x = self.backbone(inputs, metas=metas) if self.with_backbone else inputs
         if temporal_grids is None:
             temporal_grids = self._temporal_grid_from_metas(metas, masks)
@@ -232,6 +330,7 @@ class IrregularActionFormer(BaseDetector):
             self.backbone.set_train_epoch(curr_epoch)
 
     def forward_test(self, inputs, masks, metas=None, infer_cfg=None, temporal_grids=None, **kwargs):
+        self._assert_axis_contracts(metas, stage="test")
         x = self.backbone(inputs, metas=metas) if self.with_backbone else inputs
         if temporal_grids is None:
             temporal_grids = self._temporal_grid_from_metas(metas, masks)
@@ -251,10 +350,14 @@ class IrregularActionFormer(BaseDetector):
         rpn_proposals, rpn_scores = predictions
         pre_nms_thresh = getattr(post_cfg, "pre_nms_thresh", 0.001)
         pre_nms_topk = getattr(post_cfg, "pre_nms_topk", 2000)
+        debug_dump_proposals = bool(self._cfg_get(post_cfg, "debug_dump_proposals", False))
+        debug_dump_path = self._cfg_get(post_cfg, "debug_dump_path", None)
+        debug_dump_topk = int(self._cfg_get(post_cfg, "debug_dump_topk", 100))
         num_classes = rpn_scores[0].shape[-1]
 
         results = {}
         for i in range(len(metas)):
+            self._assert_axis_contract(metas[i], stage="post_processing")
             segments = rpn_proposals[i].detach().cpu()
             scores = rpn_scores[i].detach().cpu()
 
@@ -280,6 +383,15 @@ class IrregularActionFormer(BaseDetector):
                 segments, scores, labels = batched_nms(segments, scores, labels, **post_cfg.nms)
 
             video_id = metas[i]["video_name"]
+            if debug_dump_proposals:
+                debug_records = self._proposal_axis_debug_records(
+                    segments,
+                    scores,
+                    labels,
+                    metas[i],
+                    topk=debug_dump_topk,
+                )
+                self._write_proposal_axis_debug_records(debug_dump_path, debug_records)
             segments = convert_to_seconds(segments, metas[i])
 
             if isinstance(ext_cls, list):

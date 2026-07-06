@@ -118,6 +118,17 @@ Reference snapshot:
   - Updated `bridge_hard_linear_absrange_radiuslevel` to use level-stride decode/radius fields instead of the older half-cell-span approximation.
   - Added `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py` as the corrected dense-like bridge candidate.
   - Added tests for V2 level-stride field separation and full-interval temporal-grid downsampling. Local Windows config tests pass; Linux tensor tests must be run on the remote environment.
+  - Same-batch audit after the scale-separation patch compared `openrange`, `absrange`, and `levelstride` on the same batch:
+    - `openrange`: GT coverage `38/38`, `pos_by_level=[200, 140, 90, 65, 34, 15]`. This confirms that opening the range restores all levels, but it also keeps the all-level generalization side effect.
+    - `absrange`: GT coverage `38/38`, `pos_by_level=[9, 11, 20, 30, 14, 0]`. This is the best bounded compromise among the audited options.
+    - `levelstride`: GT coverage `20/38`, `pos_by_level=[8, 18, 3, 0, 0, 0]`. This is too strict and should not be long-trained before redesign.
+  - Added `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`, using expanded absolute ranges `[(0, 8), (2, 16), (4, 32), (8, 64), (16, 128), (32, 10000)]` with level-stride decode/radius fields. This is the next audit candidate before any long training.
+  - Added explicit axis contract metadata from `LoadFrames`: `irregular_gt_axis`, `irregular_proposal_axis`, `irregular_postprocess_axis`, and `irregular_axis_contract`.
+  - Added runtime axis-contract checks in `IrregularActionFormer` before train/test/post-processing, plus optional proposal-axis debug dumping through `post_cfg.debug_dump_proposals`, `debug_dump_path`, and `debug_dump_topk`.
+  - Fixed a selected-axis route bug: when `remap_gt_to_selected_axis=True`, the bridge/head temporal grid must emit centers on the selected index axis `0..N`, while native selected positions are kept only for seconds conversion. Previously the selected-axis branch reused native selected positions as head centers, which could silently mismatch proposal coordinates.
+  - Added deterministic `uniform_fixed_subsample` to support equal-interval 50% sanity controls without changing the existing `random_fixed_subsample` behavior.
+  - Added `scripts/verify_official_dense_reference.py` to diff the local dense-reference files against upstream OpenTAD raw files, and added a Linux-only bridge hard uniform-grid target test that locks the official dense target/decode semantics in the stride-1 case.
+  - Local dry run `python scripts/verify_official_dense_reference.py --no-fail-on-diff` succeeded and reported dense-reference drift, including major local changes in `anchor_free_head.py` and extra grid-aware FPN classes. Treat this as evidence that current-repo dense code is not an authoritative official baseline.
 
 - Stop prioritizing geometry ablations until the supervision path is repaired.
 - Stop treating missing regression range gate as a standalone primary cause; the completed `reggate` run refutes that narrow hypothesis.

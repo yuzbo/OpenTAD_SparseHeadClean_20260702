@@ -572,6 +572,20 @@ class LoadFrames:
         selected = np.sort(rng.choice(total_units, size=int(target_count), replace=False))
         return self._expand_selected_units(selected.astype(np.int64), valid_len)
 
+    def _select_uniform_fixed_positions(self, valid_len, target_frame_num):
+        if valid_len <= 0 or target_frame_num <= 0:
+            return np.zeros((0,), dtype=np.int64)
+
+        total_units = self._num_selection_units(valid_len)
+        target_count = self._selection_target_count(target_frame_num)
+        if target_count >= total_units:
+            return self._expand_selected_units(np.arange(total_units, dtype=np.int64), valid_len)
+
+        return self._expand_selected_units(
+            self._uniform_pick_indices(np.arange(total_units), int(target_count)),
+            valid_len,
+        )
+
     def _select_stratified_random_fixed_positions(self, valid_len, target_frame_num, sample_key):
         if valid_len <= 0 or target_frame_num <= 0:
             return np.zeros((0,), dtype=np.int64)
@@ -643,6 +657,15 @@ class LoadFrames:
         results["irregular_selected_positions"] = np.asarray(kept_positions, dtype=np.float32) / scale
         results["irregular_selected_valid_len"] = float(valid_len) / scale
         results["irregular_native_axis"] = bool(not self.remap_gt_to_selected_axis)
+        axis = "selected" if self.remap_gt_to_selected_axis else "native"
+        results["irregular_gt_axis"] = axis
+        results["irregular_proposal_axis"] = axis
+        results["irregular_postprocess_axis"] = axis
+        results["irregular_axis_contract"] = dict(
+            gt_axis=axis,
+            proposal_axis=axis,
+            postprocess_axis=axis,
+        )
 
     def _oracle_subsample_window(self, dense_frame_idxs, gt_segments, gt_labels, target_frame_num, profile):
         valid_len = int(len(dense_frame_idxs))
@@ -802,6 +825,7 @@ class LoadFrames:
 
         elif self.method in (
             "random_fixed_subsample",
+            "uniform_fixed_subsample",
             "stratified_random_fixed_subsample",
             "pseudo_boundary_hybrid_subsample",
             "pseudo_boundary_snap_subsample",
@@ -895,6 +919,8 @@ class LoadFrames:
             )
             if self.method == "stratified_random_fixed_subsample":
                 keep_positions = self._select_stratified_random_fixed_positions(valid_len, frame_num, sample_key)
+            elif self.method == "uniform_fixed_subsample":
+                keep_positions = self._select_uniform_fixed_positions(valid_len, frame_num)
             elif self.method == "pseudo_boundary_hybrid_subsample":
                 boundary_scores = load_boundary_scores(
                     self.pseudo_boundary_cache_dir,

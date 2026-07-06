@@ -212,8 +212,20 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     levelstride = load_mmengine_config_or_skip(
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py"
     )
+    absrange_expanded = load_mmengine_config_or_skip(
+        "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py"
+    )
 
-    for cfg in (hard_linear, hard_log, soft_topk1, openrange, absrange, absrange_radiuslevel, levelstride):
+    for cfg in (
+        hard_linear,
+        hard_log,
+        soft_topk1,
+        openrange,
+        absrange,
+        absrange_radiuslevel,
+        levelstride,
+        absrange_expanded,
+    ):
         head = cfg.model.rpn_head
         assert cfg.model.projection.type == "GridAwareConv1DTransformerProj"
         assert cfg.model.neck.type == "GridAwareFPNIdentity"
@@ -272,6 +284,23 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
     assert levelstride.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
     assert "hard_linear_levelstride_n16r4" in levelstride.work_dir
 
+    assert absrange_expanded.model.rpn_head.assignment_mode == "hard"
+    assert absrange_expanded.model.rpn_head.regression_mode == "symmetric_linear"
+    assert absrange_expanded.model.rpn_head.center_radius_scale == "point_radius"
+    assert absrange_expanded.model.rpn_head.reg_denom_mode == "left_right_mean"
+    assert absrange_expanded.model.rpn_head.prior_generator.range_mode == "absolute"
+    assert absrange_expanded.model.rpn_head.prior_generator.decode_scale_mode == "level_stride"
+    assert absrange_expanded.model.rpn_head.prior_generator.radius_scale_mode == "level_stride"
+    assert [tuple(item) for item in absrange_expanded.model.rpn_head.prior_generator.regression_range] == [
+        (0, 8),
+        (2, 16),
+        (4, 32),
+        (8, 64),
+        (16, 128),
+        (32, 10000),
+    ]
+    assert "hard_linear_absrange_expanded_n16r4" in absrange_expanded.work_dir
+
 
 def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
     bridge_impl = read("opentad/models/dense_heads/irregular_actionformer_bridge_head.py")
@@ -293,6 +322,9 @@ def test_sparse_head_assignment_audit_tool_contract():
 
     assert "sample_id" in script
     assert "video_name" in script
+    assert "gt_axis" in script
+    assert "proposal_axis" in script
+    assert "postprocess_axis" in script
     assert "gt_length_bucket" in script
     assert "gt_covered_any" in script
     assert "gt_covered_level_bitmap" in script
@@ -348,6 +380,69 @@ def test_bridge_head_half_cell_scale_mode_on_linux():
     assert torch.allclose(encoded, torch.tensor([[1.0, 2.0], [1.0, 2.0]]))
 
 
+def test_bridge_hard_uniform_grid_matches_official_dense_target_contract_on_linux():
+    torch = import_torch_or_skip()
+    mmengine_config = pytest.importorskip("mmengine.config")
+    bridge_head = pytest.importorskip("opentad.models.dense_heads.irregular_actionformer_bridge_head")
+    config_dict = mmengine_config.ConfigDict
+
+    head = bridge_head.IrregularActionFormerBridgeHead(
+        num_classes=5,
+        in_channels=512,
+        feat_channels=512,
+        num_convs=1,
+        assignment_mode="hard",
+        regression_mode="symmetric_linear",
+        prior_generator=config_dict(
+            type="IrregularPointGeneratorV2",
+            strides=[1],
+            regression_range=[(0, 4)],
+            range_mode="absolute",
+            decode_scale_mode="level_stride",
+            radius_scale_mode="level_stride",
+        ),
+        loss=config_dict(cls_loss=dict(type="FocalLoss"), reg_loss=dict(type="DIOULoss")),
+        center_sample="radius",
+        center_sample_radius=1.5,
+        center_radius_scale="point_radius",
+        reg_denom_mode="left_right_mean",
+        debug_cfg=dict(enable=False),
+    )
+
+    point = torch.tensor(
+        [
+            [
+                [0.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+                [1.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+                [2.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+                [3.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+                [4.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+                [5.0, 0.0, 4.0, 1.0, 1.0, 1.0, 1.0],
+            ]
+        ]
+    )
+    gt_segments = [torch.tensor([[1.0, 5.0]])]
+    gt_labels = [torch.tensor([2])]
+
+    cls_targets, reg_targets, reg_weights, _ = head._prepare_targets_hard([point], gt_segments, gt_labels)
+
+    assert reg_weights[0].tolist() == [0.0, 0.0, 1.0, 1.0, 1.0, 0.0]
+    assert cls_targets[0][:, 2].tolist() == [0.0, 0.0, 1.0, 1.0, 1.0, 0.0]
+    assert torch.allclose(
+        reg_targets[0],
+        torch.tensor(
+            [
+                [0.0, 0.0],
+                [0.0, 0.0],
+                [1.0, 3.0],
+                [2.0, 2.0],
+                [3.0, 1.0],
+                [0.0, 0.0],
+            ]
+        ),
+    )
+
+
 def test_adapter_sparse_cross_over_configs_isolate_projection_neck_from_head():
     dense_head_grid = load_mmengine_config_or_skip(
         "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_gridaware_n16r4.py"
@@ -401,6 +496,110 @@ def test_adapter_sparse_configs_make_gt_axis_contract_explicit():
     for cfg in (dense_control, dense_head_grid):
         for step in load_frame_steps(cfg).values():
             assert bool(step.remap_gt_to_selected_axis)
+
+
+def test_loadframes_supports_deterministic_uniform_fixed_subsample_for_equal_interval_control():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+
+    assert '"uniform_fixed_subsample"' in load_frames_impl
+    assert "keep_positions = self._select_uniform_fixed_positions" in load_frames_impl
+    assert "def _select_uniform_fixed_positions(" in load_frames_impl
+    assert "return self._expand_selected_units(" in load_frames_impl
+    assert "self._uniform_pick_indices(np.arange(total_units), int(target_count))" in load_frames_impl
+
+
+def test_loadframes_records_explicit_axis_contract_metadata():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+
+    assert 'axis = "selected" if self.remap_gt_to_selected_axis else "native"' in load_frames_impl
+    assert 'results["irregular_gt_axis"] = axis' in load_frames_impl
+    assert 'results["irregular_proposal_axis"] = axis' in load_frames_impl
+    assert 'results["irregular_postprocess_axis"] = axis' in load_frames_impl
+    assert 'results["irregular_axis_contract"]' in load_frames_impl
+
+
+def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dump_helper():
+    detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
+
+    assert "def _axis_contract_from_meta(" in detector_impl
+    assert "def _assert_axis_contract(" in detector_impl
+    assert "def _proposal_axis_debug_records(" in detector_impl
+    assert "debug_dump_proposals" in detector_impl
+    assert "proposal_axis" in detector_impl
+    assert "postprocess_axis" in detector_impl
+
+
+def test_irregular_actionformer_selected_axis_grid_uses_selected_indices_not_native_positions():
+    detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
+
+    assert "selected_center = torch.arange" in detector_impl
+    assert '"center": selected_center[:target_len][None]' in detector_impl
+    assert "selected-axis proposals must be emitted on the selected index axis" in detector_impl
+
+
+def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on_linux():
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.irregular_actionformer")
+
+    model = object.__new__(detector.IrregularActionFormer)
+    good_meta = dict(
+        irregular_native_axis=True,
+        irregular_gt_axis="native",
+        irregular_proposal_axis="native",
+        irregular_postprocess_axis="native",
+    )
+    bad_meta = dict(
+        irregular_native_axis=True,
+        irregular_gt_axis="native",
+        irregular_proposal_axis="selected",
+        irregular_postprocess_axis="native",
+    )
+
+    assert model._axis_contract_from_meta(good_meta) == ("native", "native", "native")
+    model._assert_axis_contract(good_meta, stage="test")
+    with pytest.raises(ValueError, match="axis contract"):
+        model._assert_axis_contract(bad_meta, stage="test")
+
+    records = model._proposal_axis_debug_records(
+        torch.tensor([[0.0, 4.0], [1.0, 5.0]]),
+        torch.tensor([0.9, 0.7]),
+        torch.tensor([3, 4]),
+        dict(
+            video_name="video_test_0001",
+            fps=1.0,
+            snippet_stride=1.0,
+            offset_frames=0.0,
+            window_start_frame=0.0,
+            duration=10.0,
+            irregular_native_axis=True,
+            irregular_gt_axis="native",
+            irregular_proposal_axis="native",
+            irregular_postprocess_axis="native",
+        ),
+        topk=1,
+    )
+    assert records == [
+        dict(
+            video_name="video_test_0001",
+            rank=0,
+            proposal_axis="native",
+            postprocess_axis="native",
+            label=3,
+            score=0.9,
+            segment_axis=[0.0, 4.0],
+            segment_seconds=[0.0, 4.0],
+        )
+    ]
+
+
+def test_official_dense_reference_verifier_tracks_upstream_opentad_sources():
+    script = read("scripts/verify_official_dense_reference.py")
+
+    assert "https://raw.githubusercontent.com/sming256/OpenTAD/main/opentad/models/dense_heads/anchor_free_head.py" in script
+    assert "https://raw.githubusercontent.com/sming256/OpenTAD/main/opentad/models/dense_heads/prior_generator/point_generator.py" in script
+    assert "https://raw.githubusercontent.com/sming256/OpenTAD/main/opentad/models/necks/fpn.py" in script
+    assert "difflib.unified_diff" in script
+    assert "--official-root" in script
 
 
 def test_root_cause_notes_record_gt_axis_and_route_sanity_limits():

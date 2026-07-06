@@ -328,6 +328,20 @@ def make_sample_id(batch_idx, sample_idx, meta):
     return f"batch{batch_idx:04d}_sample{sample_idx:02d}_{video_name}_{start}"
 
 
+def axis_contract(meta):
+    default_axis = "native" if meta_value(meta, "irregular_native_axis", False) else "selected"
+    contract = meta_value(meta, "irregular_axis_contract", {}) or {}
+    return {
+        "gt_axis": meta_value(meta, "irregular_gt_axis", contract.get("gt_axis", default_axis)),
+        "proposal_axis": meta_value(meta, "irregular_proposal_axis", contract.get("proposal_axis", default_axis)),
+        "postprocess_axis": meta_value(
+            meta,
+            "irregular_postprocess_axis",
+            contract.get("postprocess_axis", default_axis),
+        ),
+    }
+
+
 @torch.no_grad()
 def audit_config(config_path, batches, split, device):
     cfg = Config.fromfile(config_path)
@@ -364,6 +378,7 @@ def audit_config(config_path, batches, split, device):
         for sample_idx, (point, gt_segment) in enumerate(zip(point_list, gt_segments)):
             meta = metas[sample_idx] if metas is not None else {}
             sample_id = make_sample_id(batch_idx, sample_idx, meta)
+            axes = axis_contract(meta)
             diag = build_hard_diagnostics(head, point, gt_segment, offsets)
             assigned = diag.pop("assigned_gt")
             reg_weight = reg_weight_list[sample_idx]
@@ -405,6 +420,9 @@ def audit_config(config_path, batches, split, device):
                     "sample_idx": int(sample_idx),
                     "sample_id": sample_id,
                     "video_name": meta_value(meta, "video_name", "unknown"),
+                    "gt_axis": axes["gt_axis"],
+                    "proposal_axis": axes["proposal_axis"],
+                    "postprocess_axis": axes["postprocess_axis"],
                     "num_gt": int(gt_segment.shape[0]),
                     "assignment_mode": getattr(head, "assignment_mode", "unknown"),
                     "regression_mode": getattr(head, "regression_mode", "unknown"),
