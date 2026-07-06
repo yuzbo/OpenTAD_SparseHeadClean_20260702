@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import runpy
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
@@ -20,6 +21,53 @@ def _load_json(path_or_obj):
         with open(path_or_obj, "r", encoding="utf-8") as handle:
             return json.load(handle)
     return path_or_obj
+
+
+def _cfg_get(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _load_config(config_path):
+    config_path = Path(config_path)
+    try:
+        from mmengine.config import Config
+
+        return Config.fromfile(str(config_path))
+    except Exception:
+        # Fallback for tiny standalone configs used by local tests or ad-hoc audits.
+        return runpy.run_path(str(config_path))
+
+
+def _resolve_path(value, base_dir):
+    path = Path(str(value)).expanduser()
+    if not path.is_absolute():
+        path = Path(base_dir) / path
+    return path
+
+
+def resolve_ground_truth_from_config(config_path, split="val"):
+    config_path = Path(config_path)
+    cfg = _load_config(config_path)
+    dataset = _cfg_get(cfg, "dataset")
+    split_cfg = _cfg_get(dataset, split)
+    ann_file = _cfg_get(split_cfg, "ann_file")
+    if not ann_file:
+        raise ValueError(f"Could not resolve dataset.{split}.ann_file from {config_path}")
+    return _resolve_path(ann_file, config_path.parent)
+
+
+def resolve_prediction_path(path):
+    path = Path(path)
+    if path.is_file():
+        return path
+    if not path.exists():
+        raise FileNotFoundError(f"Prediction path does not exist: {path}")
+    candidates = [candidate for candidate in path.rglob("result_detection.json") if candidate.is_file()]
+    if not candidates:
+        raise FileNotFoundError(f"No result_detection.json found under {path}")
+    return max(candidates, key=lambda candidate: (candidate.stat().st_mtime_ns, str(candidate)))
 
 
 def segment_iou(target, candidate):
@@ -225,29 +273,54 @@ def write_rows_csv(rows, path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ground-truth", required=True, help="OpenTAD annotation JSON with a database field")
-    parser.add_argument("--prediction", required=True, help="OpenTAD result JSON with a results field")
+    parser.add_argument("--ground-truth", default=None, help="OpenTAD annotation JSON with a database field")
+    parser.add_argument("--prediction", default=None, help="OpenTAD result JSON with a results field")
+    parser.add_argument("--config", default=None, help="OpenTAD config used to resolve dataset.<split>.ann_file")
+    parser.add_argument(
+        "--experiment-dir",
+        default=None,
+        help="Experiment work_dir or run directory; the newest result_detection.json below it is used.",
+    )
     parser.add_argument("--subset", default="validation")
+    parser.add_argument("--dataset-split", default="val", help="Config dataset split used with --config")
     parser.add_argument("--tiou-thresholds", default="0.3,0.4,0.5,0.6,0.7")
     parser.add_argument("--topk-per-video", type=int, default=None)
     parser.add_argument("--label-aware", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--output-json", required=True)
+    parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    ground_truth = args.ground_truth
+    prediction = args.prediction
+
+    if ground_truth is None and args.config is not None:
+        ground_truth = resolve_ground_truth_from_config(args.config, args.dataset_split)
+    if prediction is None and args.experiment_dir is not None:
+        prediction = resolve_prediction_path(args.experiment_dir)
+    if ground_truth is None:
+        raise SystemExit("Missing --ground-truth or --config")
+    if prediction is None:
+        raise SystemExit("Missing --prediction or --experiment-dir")
+
+    output_json = args.output_json
+    if output_json is None:
+        if args.experiment_dir is None:
+            raise SystemExit("Missing --output-json when --experiment-dir is not provided")
+        output_json = str(Path(args.experiment_dir) / "detection_quality_summary.json")
+
     thresholds = tuple(float(item) for item in args.tiou_thresholds.split(",") if item)
     summary, rows = summarize_detection_quality(
-        args.ground_truth,
-        args.prediction,
+        ground_truth,
+        prediction,
         subset=args.subset,
         tiou_thresholds=thresholds,
         topk_per_video=args.topk_per_video,
         label_aware=args.label_aware,
     )
-    output_path = Path(args.output_json)
+    output_path = Path(output_json)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump({"summary": summary, "rows": rows}, handle, indent=2, sort_keys=True)

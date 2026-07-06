@@ -398,6 +398,38 @@ def test_detection_quality_analyzer_reports_high_iou_recall_and_boundary_error(t
     assert summary["bucket:[4,8):recall@0.50"] == pytest.approx(1.0)
 
 
+def test_detection_quality_analyzer_resolves_config_gt_and_latest_result(tmp_path):
+    analyzer = load_module("tools/analyze_detection_quality.py", "detection_quality_analyzer_resolve")
+
+    cfg_path = tmp_path / "toy_config.py"
+    ann_path = tmp_path / "annotations.json"
+    cfg_path.write_text(
+        "\n".join(
+            [
+                "dataset = dict(",
+                "    train=dict(ann_file='train.json'),",
+                f"    val=dict(ann_file=r'{ann_path}'),",
+                "    test=dict(ann_file='test.json'),",
+                ")",
+                "work_dir = 'exps/toy_exp'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    ann_path.write_text('{"database": {}}', encoding="utf-8")
+
+    older = tmp_path / "exps" / "toy_exp" / "gpu1_id1" / "result_detection.json"
+    newer = tmp_path / "exps" / "toy_exp" / "gpu1_id2" / "result_detection.json"
+    older.parent.mkdir(parents=True)
+    newer.parent.mkdir(parents=True)
+    older.write_text('{"results": {"old": []}}', encoding="utf-8")
+    newer.write_text('{"results": {"new": []}}', encoding="utf-8")
+    newer.touch()
+
+    assert analyzer.resolve_ground_truth_from_config(cfg_path, "val") == ann_path
+    assert analyzer.resolve_prediction_path(tmp_path / "exps" / "toy_exp") == newer
+
+
 def test_bridge_head_half_cell_scale_mode_on_linux():
     torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")

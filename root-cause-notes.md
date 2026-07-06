@@ -130,6 +130,7 @@ Reference snapshot:
     - `openrange`: GT coverage `38/38`, `pos_by_level=[200, 140, 90, 65, 34, 15]`.
     - Interpretation: `absrange_expanded` is now the strongest bounded native-axis candidate. It restores all GT coverage and level5 positives without openrange's all-level flood.
   - Added `tools/analyze_detection_quality.py` for post-training high-IoU localization diagnostics. It consumes standard OpenTAD annotation/result JSON files and reports per-GT best IoU, tIoU recall, GT-length bucket coverage, and normalized start/end boundary error. Use this after each completed candidate to separate three failure modes: no proposal near the GT, proposal near the GT but boundary-calibration error, and score/NMS ranking error.
+  - The diagnostic script can now resolve GT from an OpenTAD config (`--config ... --dataset-split val`) and auto-select the newest `result_detection.json` below an experiment directory (`--experiment-dir ...`). This is the intended post-training command shape for `absrange_expanded` and the equal-interval controls, because it avoids manual path mistakes once a run finishes.
   - Added remote launch helpers for the next long run:
     - `remote_runs/run_gpu1_bridge_absrange_expanded_long_20260706.sh`
     - `remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh`
