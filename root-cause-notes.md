@@ -123,6 +123,12 @@ Reference snapshot:
     - `absrange`: GT coverage `38/38`, `pos_by_level=[9, 11, 20, 30, 14, 0]`. This is the best bounded compromise among the audited options.
     - `levelstride`: GT coverage `20/38`, `pos_by_level=[8, 18, 3, 0, 0, 0]`. This is too strict and should not be long-trained before redesign.
   - Added `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`, using expanded absolute ranges `[(0, 8), (2, 16), (4, 32), (8, 64), (16, 128), (32, 10000)]` with level-stride decode/radius fields. This is the next audit candidate before any long training.
+  - Remote same-batch audit for `absrange_expanded` completed at `/data/run01/sczc063/yuzibo/OpenTAD_SparseHeadClean_20260702/logs/sparse_head_assignment_audit_20260706/same_batch_absrange_expanded_20260706_112548/assignment_audit.json`.
+    - `absrange_expanded`: GT coverage `38/38`, `pos_by_level=[17, 30, 44, 45, 22, 4]`, axes `native/native/native`.
+    - `absrange`: GT coverage `38/38`, `pos_by_level=[9, 11, 20, 30, 14, 0]`.
+    - `levelstride`: GT coverage `20/38`, `pos_by_level=[8, 18, 3, 0, 0, 0]`.
+    - `openrange`: GT coverage `38/38`, `pos_by_level=[200, 140, 90, 65, 34, 15]`.
+    - Interpretation: `absrange_expanded` is now the strongest bounded native-axis candidate. It restores all GT coverage and level5 positives without openrange's all-level flood.
   - Added explicit axis contract metadata from `LoadFrames`: `irregular_gt_axis`, `irregular_proposal_axis`, `irregular_postprocess_axis`, and `irregular_axis_contract`.
   - Added runtime axis-contract checks in `IrregularActionFormer` before train/test/post-processing, plus optional proposal-axis debug dumping through `post_cfg.debug_dump_proposals`, `debug_dump_path`, and `debug_dump_topk`.
   - Fixed a selected-axis route bug: when `remap_gt_to_selected_axis=True`, the bridge/head temporal grid must emit centers on the selected index axis `0..N`, while native selected positions are kept only for seconds conversion. Previously the selected-axis branch reused native selected positions as head centers, which could silently mismatch proposal coordinates.
