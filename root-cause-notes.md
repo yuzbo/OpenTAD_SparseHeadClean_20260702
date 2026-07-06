@@ -1,5 +1,5 @@
 ---
-updated: 2026-07-05
+updated: 2026-07-06
 status: active
 scope: HeadV3 performance-collapse root-cause hypotheses for the 50% fixed THUMOS adapter sparse-head route.
 out-of-scope: Raw logs, checkpoints, generated result archives, and historical wiki material.
@@ -12,6 +12,8 @@ out-of-scope: Raw logs, checkpoints, generated result archives, and historical w
 The current leading judgment is that HeadV3 did not suffer a training crash. The fixed rerun completed with `Average-mAP=40.20`, no `Traceback`, no OOM, no non-finite loss, and a stable prediction count of `422000`. The follow-up `nogeometry` and `reggate` runs also completed cleanly. The performance issue is therefore more likely caused by the supervision definition learned by the head, especially assignment, regression targets, and their interaction with irregular point scales, rather than by a broken training run.
 
 Important comparison boundary: the dense control family uses selected-axis GT (`remap_gt_to_selected_axis=True`), while the HeadV3 and Bridge families use native-axis GT (`remap_gt_to_selected_axis=False`). Therefore the old `51.59 -> 40.20` gap is not a pure head-only causal comparison. It should be read as the gap between the dense selected-axis reference and the current native-axis sparse-head route.
+
+Official-OpenTAD review boundary absorbed on 2026-07-06: the authority for dense AdaTAD / ActionFormer behavior must be the upstream OpenTAD implementation, not the dense code copied into this working repository. The external review in `pro-review-official-opentad-20260706.md` treats the current route as partially implemented but not contract-equivalent to official dense AdaTAD. It also reframes the largest performance gap: if the equal-interval 50% baseline is around `Average-mAP ~= 65`, then the current `40-42` results are a route-level collapse, not a small head regression. Equal-interval 50% remains close to a uniform dense grid, while random-fixed native-axis sparse detection changes the observation geometry and the supervision coordinate system at the same time.
 
 Reference snapshot:
 
@@ -65,7 +67,26 @@ Reference snapshot:
    - The bridge route lacks boundary auxiliary supervision and explicit boundary refinement, so it can recover proposal coverage without recovering sub-cell boundary precision.
    - Post-processing score / NMS calibration may still be tuned for dense ActionFormer distributions, not duplicated openrange all-level predictions.
 
+9. Official dense parity is now a prerequisite, not an optional cleanup.
+
+   The 2026-07-06 official OpenTAD review explicitly marks parity with official dense `ActionFormerHead` / `AnchorFreeHead` / `PointGenerator` as a fairness guard. Before making new architectural claims, the route must show which gap is caused by official-dense-to-current-repo drift, which gap is caused by selected-axis versus native-axis supervision, and which gap remains after bridge hard assignment matches official dense targets on a uniform grid.
+
+10. The current highest-risk implementation contract is scale separation.
+
+   The review identifies `IrregularPointGeneratorV2` and `IrregularActionFormerBridgeHead` as high-risk because range scale, decode scale, and center-radius scale have historically been mixed together through `cell_left + cell_right`. The current `range_mode="hard"` collapse is the visible symptom. The next implementation direction should separate point fields into range scale, left/right decode scale, and radius scale; keep `local_cell_span` behavior only as an ablation; and add same-batch audits that report center failures, range failures, GT coverage, per-level positives, and proposal coordinate sanity.
+
+11. Projection/backbone/neck geometry remains a possible first-order failure.
+
+   Even when temporal grids are passed through the route, the main feature mixing may still be slot-index based. Official dense ConvTransformer/FPN assumes uniform token spacing. If current projection/backbone/neck do not actually model true temporal distances, the head receives features whose geometry disagrees with native-axis labels. This is now a leading explanation for why openrange restores positive coverage but does not restore high-IoU boundary precision.
+
 ## Interpretation Plan
+
+- 2026-07-06 official OpenTAD review absorbed:
+  - Full response recorded at `pro-review-official-opentad-20260706.md` with SHA256 `8e9fda2003be113d80e6d2c4886ef9261f54a3e40078e065bfed12f9e503dc41`.
+  - Treat upstream OpenTAD as the dense authority and current-repo dense configs as objects to verify, not as trusted ground truth.
+  - Promote official dense parity and selected-axis / native-axis sanity checks ahead of further long training.
+  - Add or run controls for `equal_interval_50pct + current bridge/head`, `random_fixed + selected-axis/remap=True + official dense head`, and `random_fixed native + bridge hard + corrected scale-separated prior`.
+  - Extend audits beyond positive counts to include proposal coordinate sanity, range-fail/center-fail decomposition, and high-IoU error distribution.
 
 - 2026-07-05 implementation update:
   - Added `center_radius_scale` and `reg_denom_mode` knobs to `IrregularActionFormerBridgeHead`.
