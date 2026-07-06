@@ -10,6 +10,7 @@ NODE="${NODE:-g0030}"
 GPU_INDEX="${GPU_INDEX:-1}"
 GPU_MEM_FREE_MAX_MIB="${GPU_MEM_FREE_MAX_MIB:-100}"
 SSH_TIMEOUT_SECONDS="${SSH_TIMEOUT_SECONDS:-20}"
+ALLOWED_EXISTING_STEP_REGEX="${ALLOWED_EXISTING_STEP_REGEX:-^1118197\\.(660|batch|extern)$}"
 POLL_SECONDS="${POLL_SECONDS:-300}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-43200}"
 TARGET_LAUNCHER="$ROOT/remote_runs/launch_gpu1_stage2_dense_selected_axis_short_20260706.sh"
@@ -48,7 +49,7 @@ gpu1_compute_count() {
   status=$?
   set -e
   if [[ "$status" -ne 0 ]]; then
-    echo 999
+    echo unknown
     return 0
   fi
   awk -F, -v uuid="$uuid" '
@@ -61,6 +62,23 @@ gpu1_compute_count() {
       END { print count + 0; }' <<<"$output"
 }
 
+other_active_steps_count() {
+  local output status
+  set +e
+  output="$(squeue --steps -j 1118197 --noheader 2>/dev/null)"
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    echo 999
+    return 0
+  fi
+  awk -v allowed="$ALLOWED_EXISTING_STEP_REGEX" '
+      NF > 0 && $1 !~ allowed {
+        count++;
+      }
+      END { print count + 0; }' <<<"$output"
+}
+
 short_validation_already_active() {
   pgrep -f "run_gpu1_stage2_dense_selected_axis_short_20260706.sh" >/dev/null 2>&1 && return 0
   squeue --steps -j 1118197 --noheader 2>/dev/null | grep -q "stage2_dense" && return 0
@@ -68,7 +86,7 @@ short_validation_already_active() {
 }
 
 gpu1_free() {
-  local info uuid mem apps
+  local info uuid mem apps other_steps
   info="$(gpu1_uuid_and_mem)"
   uuid="$(awk '{print $1}' <<<"$info")"
   mem="$(awk '{print $2}' <<<"$info")"
@@ -77,8 +95,9 @@ gpu1_free() {
     return 1
   fi
   apps="$(gpu1_compute_count "$uuid")"
-  log_msg "gpu${GPU_INDEX}_uuid=$uuid mem_mib=$mem compute_apps=$apps threshold_mib=$GPU_MEM_FREE_MAX_MIB"
-  [[ "$mem" -le "$GPU_MEM_FREE_MAX_MIB" && "$apps" -eq 0 ]]
+  other_steps="$(other_active_steps_count)"
+  log_msg "gpu${GPU_INDEX}_uuid=$uuid mem_mib=$mem compute_apps=$apps threshold_mib=$GPU_MEM_FREE_MAX_MIB other_steps=$other_steps allowed_steps_regex=$ALLOWED_EXISTING_STEP_REGEX"
+  [[ "$mem" -le "$GPU_MEM_FREE_MAX_MIB" && "$other_steps" -eq 0 ]]
 }
 
 snapshot() {
