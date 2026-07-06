@@ -13,6 +13,7 @@ EXP_LABEL="${EXP_LABEL:-$(basename "$CFG" .py)}"
 EXP_ID="${EXP_ID:-0}"
 PORT="${PORT:-$((32000 + (${SLURM_JOB_ID:-0} % 10000)))}"
 RUN_STAGE4_AFTER="${RUN_STAGE4_AFTER:-1}"
+ALLOW_OVERWRITE_STAGE2_OUTPUT="${ALLOW_OVERWRITE_STAGE2_OUTPUT:-0}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs/slurm_stage2_dense_selected_axis_long}"
 RUN_TAG="${RUN_TAG:-stage2_dense_axis_${EXP_LABEL}_${SLURM_JOB_ID:-manual}_$(date +%Y%m%d_%H%M%S)}"
 CHAIN_LOG="$LOG_DIR/${RUN_TAG}.log"
@@ -23,6 +24,27 @@ mkdir -p "$LOG_DIR"
 exec > >(tee -a "$CHAIN_LOG") 2>&1
 
 log_msg() { echo "$(date '+%F %T') [slurm-stage2-dense] $*"; }
+
+prepare_stage2_output_dir() {
+  local run_dir="$1"
+  if [[ -e "$run_dir" ]]; then
+    if [[ "$ALLOW_OVERWRITE_STAGE2_OUTPUT" != "1" ]]; then
+      echo "Refusing long training: Stage-2 output directory already exists: $run_dir" >&2
+      echo "Set ALLOW_OVERWRITE_STAGE2_OUTPUT=1 to remove it before this controlled Slurm run." >&2
+      exit 66
+    fi
+    case "$run_dir" in
+      "$ROOT"/exps/thumos/adatad/*/gpu1_id*) ;;
+      *)
+        echo "Refusing to remove unsafe Stage-2 output path: $run_dir" >&2
+        exit 66
+        ;;
+    esac
+    log_msg "removing existing Stage-2 output directory run_dir=$run_dir"
+    rm -rf "$run_dir"
+  fi
+  mkdir -p "$(dirname "$run_dir")"
+}
 
 if [[ "${SLURM_JOB_ID:-}" == "1118197" ]]; then
   echo "Refusing long training inside allocation 1118197; submit a separate Slurm job." >&2
@@ -45,7 +67,7 @@ export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 cd "$ROOT"
 
-log_msg "start host=$(hostname) slurm_job=${SLURM_JOB_ID:-unset} cfg=$CFG label=$EXP_LABEL exp_id=$EXP_ID run_stage4_after=$RUN_STAGE4_AFTER"
+log_msg "start host=$(hostname) slurm_job=${SLURM_JOB_ID:-unset} cfg=$CFG label=$EXP_LABEL exp_id=$EXP_ID run_stage4_after=$RUN_STAGE4_AFTER allow_overwrite_stage2_output=$ALLOW_OVERWRITE_STAGE2_OUTPUT"
 log_msg "chain_log=$CHAIN_LOG"
 log_msg "train_log=$TRAIN_LOG"
 log_msg "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
@@ -88,6 +110,18 @@ PY
 
 log_msg "py_compile preflight"
 python -m py_compile "$CFG" tools/train.py tools/check_fail_closed_config.py
+
+RUN_DIR="$(python - "$CFG" "$EXP_ID" <<'PY'
+import os
+import sys
+from mmengine.config import Config
+
+cfg = Config.fromfile(sys.argv[1])
+exp_id = int(sys.argv[2])
+print(os.path.join(cfg.work_dir, f"gpu1_id{exp_id}"))
+PY
+)"
+prepare_stage2_output_dir "$ROOT/$RUN_DIR"
 
 log_msg "START train port=$PORT exp_id=$EXP_ID"
 torchrun --master_port="$PORT" --nproc_per_node=1 tools/train.py "$CFG" --id "$EXP_ID" 2>&1 | tee "$TRAIN_LOG"

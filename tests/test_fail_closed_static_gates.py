@@ -138,6 +138,10 @@ def test_stage2_resource_boundary_short_gpu1_but_long_slurm_only():
     assert "run_stage4_detection_quality_stage2_dense_20260706.sh" in short_runner
     assert "unset CUDA_VISIBLE_DEVICES" in short_runner
     assert "REQUIRE_RESULTS=1" in short_runner
+    assert "ALLOW_OVERWRITE_STAGE2_OUTPUT" in short_runner
+    assert "prepare_stage2_output_dir" in short_runner
+    assert '"$ROOT"/exps/thumos/adatad/*/gpu1_id*' in short_runner
+    assert 'rm -rf "$run_dir"' in short_runner
     assert "srun --jobid=1118197 --overlap -w g0030" in short_launcher
     assert "export CUDA_VISIBLE_DEVICES=1" in short_launcher
 
@@ -150,6 +154,10 @@ def test_stage2_resource_boundary_short_gpu1_but_long_slurm_only():
     assert "run_stage4_detection_quality_stage2_dense_20260706.sh" in slurm_body
     assert "unset CUDA_VISIBLE_DEVICES" in slurm_body
     assert "REQUIRE_RESULTS=1" in slurm_body
+    assert "ALLOW_OVERWRITE_STAGE2_OUTPUT" in slurm_body
+    assert "prepare_stage2_output_dir" in slurm_body
+    assert '"$ROOT"/exps/thumos/adatad/*/gpu1_id*' in slurm_body
+    assert 'rm -rf "$run_dir"' in slurm_body
     assert "srun --jobid=1118197" not in slurm_body
     assert "--overlap" not in slurm_body
     assert "export CUDA_VISIBLE_DEVICES=1" not in slurm_body

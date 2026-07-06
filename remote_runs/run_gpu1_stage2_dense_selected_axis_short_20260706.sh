@@ -12,6 +12,7 @@ RUN_TRAIN="${RUN_TRAIN:-0}"
 RUN_STAGE4_AFTER="${RUN_STAGE4_AFTER:-1}"
 EXP_ID="${EXP_ID:-1}"
 PORT_BASE="${PORT_BASE:-32340}"
+ALLOW_OVERWRITE_STAGE2_OUTPUT="${ALLOW_OVERWRITE_STAGE2_OUTPUT:-0}"
 
 RANDOM_FIXED_CFG="configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py"
 UNIFORM_OFFICIAL_CFG="configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
@@ -24,6 +25,27 @@ SHORT_WORK_DIRS=(
 
 log_msg() { echo "$(date '+%F %T') [gpu1-stage2-dense-short] $*"; }
 python_works() { "$1" -c "import sys" >/dev/null 2>&1; }
+
+prepare_stage2_output_dir() {
+  local run_dir="$1"
+  if [[ -e "$run_dir" ]]; then
+    if [[ "$ALLOW_OVERWRITE_STAGE2_OUTPUT" != "1" ]]; then
+      echo "Refusing to train: Stage-2 output directory already exists: $run_dir" >&2
+      echo "Set ALLOW_OVERWRITE_STAGE2_OUTPUT=1 to remove it before this controlled short validation." >&2
+      exit 66
+    fi
+    case "$run_dir" in
+      "$ROOT"/exps/thumos/adatad/*/gpu1_id*) ;;
+      *)
+        echo "Refusing to remove unsafe Stage-2 output path: $run_dir" >&2
+        exit 66
+        ;;
+    esac
+    log_msg "removing existing Stage-2 output directory run_dir=$run_dir"
+    rm -rf "$run_dir"
+  fi
+  mkdir -p "$(dirname "$run_dir")"
+}
 
 select_python() {
   if [[ -n "${PYTHON_BIN:-}" ]]; then
@@ -54,7 +76,7 @@ select_python
 
 log_msg "root=$ROOT"
 log_msg "python_bin=$PYTHON_BIN"
-log_msg "RUN_TRAIN=$RUN_TRAIN PRECHECK_ONLY=$PRECHECK_ONLY RUN_STAGE4_AFTER=$RUN_STAGE4_AFTER EXP_ID=$EXP_ID PORT_BASE=$PORT_BASE"
+log_msg "RUN_TRAIN=$RUN_TRAIN PRECHECK_ONLY=$PRECHECK_ONLY RUN_STAGE4_AFTER=$RUN_STAGE4_AFTER EXP_ID=$EXP_ID PORT_BASE=$PORT_BASE ALLOW_OVERWRITE_STAGE2_OUTPUT=$ALLOW_OVERWRITE_STAGE2_OUTPUT"
 log_msg "fail-closed config scan"
 "$PYTHON_BIN" tools/check_fail_closed_config.py "${CONFIGS[@]}" --json-out "$FAIL_CLOSED_JSON"
 log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
@@ -125,6 +147,7 @@ for idx in "${!CONFIGS[@]}"; do
   cfg="${CONFIGS[$idx]}"
   label="${LABELS[$idx]}"
   short_work_dir="${SHORT_WORK_DIRS[$idx]}"
+  run_dir="$ROOT/$short_work_dir/gpu1_id${EXP_ID}"
   port=$((PORT_BASE + idx))
   train_log="$LOG_DIR/${RUN_TAG}_${label}_train.log"
   train_cmd=(
@@ -150,6 +173,7 @@ for idx in "${!CONFIGS[@]}"; do
     continue
   fi
 
+  prepare_stage2_output_dir "$run_dir"
   log_msg "START short validation label=$label cfg=$cfg work_dir=$short_work_dir port=$port exp_id=$EXP_ID"
   "${train_cmd[@]}" 2>&1 | tee "$train_log"
   status=${PIPESTATUS[0]}

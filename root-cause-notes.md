@@ -477,3 +477,12 @@ Reference snapshot:
   - whether missing result/quality files or hard errors block interpretation.
 - Local dry run without Stage-2 outputs correctly reports all four Stage-2 targets blocked by missing artifacts and `can_submit_long_after_short=false`.
 - Remote preflight on synced commit `b6c14cd` passed: `py_compile`, `pytest tests/test_stage2_dense_gate_summary.py tests/test_fail_closed_static_gates.py -q`, and `RUN_TAG=stage4_gate_preflight_manual REQUIRE_RESULTS=0 bash remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`. With no Stage-2 outputs yet, the remote gate correctly reports all four targets blocked by missing artifacts and writes `logs/stage4_detection_quality_stage2_dense/stage4_gate_preflight_manual_stage2_dense_gate.json`.
+
+## Stage-2 Output Staleness Guard - 2026-07-06
+
+- Added a fail-closed stale-output guard to both Stage-2 execution paths:
+  - `remote_runs/run_gpu1_stage2_dense_selected_axis_short_20260706.sh`
+  - `remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh`
+- Before training starts, the scripts now compute the exact `gpu1_id*` run directory and refuse to proceed if it already exists.
+- Controlled reruns must set `ALLOW_OVERWRITE_STAGE2_OUTPUT=1`; even then, deletion is restricted to the strict whitelist `$ROOT/exps/thumos/adatad/*/gpu1_id*`.
+- Motivation: OpenTAD `log.json` is append-style and `result_detection.json` can remain from an older run. Without this guard, Stage-2 gate summaries could be polluted by stale errors or stale predictions.
