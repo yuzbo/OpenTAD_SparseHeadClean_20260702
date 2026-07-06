@@ -173,3 +173,33 @@ def test_legacy_gpu1_long_training_entrypoints_are_disabled():
         assert "torchrun" not in text, script
         assert "srun --jobid=1118197" not in text, script
         assert "CUDA_VISIBLE_DEVICES=1" not in text, script
+
+
+def test_stage2_gpu1_short_waiter_requires_true_idle_gpu1_before_launch():
+    waiter = (ROOT / "remote_runs/watch_and_launch_gpu1_stage2_dense_selected_axis_short_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+    launcher = (ROOT / "remote_runs/launch_watch_gpu1_stage2_dense_selected_axis_short_20260706.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "GPU_INDEX=\"${GPU_INDEX:-1}\"" in waiter
+    assert "GPU_MEM_FREE_MAX_MIB=\"${GPU_MEM_FREE_MAX_MIB:-100}\"" in waiter
+    assert "--query-gpu=index,uuid,memory.used" in waiter
+    assert "--query-compute-apps=gpu_uuid,pid,process_name,used_memory" in waiter
+    assert '[[ "$mem" -le "$GPU_MEM_FREE_MAX_MIB" && "$apps" -eq 0 ]]' in waiter
+    assert "short_validation_already_active" in waiter
+    assert "bash \"$TARGET_LAUNCHER\"" in waiter
+    assert "tools/train.py" not in waiter
+    assert "torchrun" not in waiter
+    assert "srun --jobid=1118197" not in waiter
+    assert "CUDA_VISIBLE_DEVICES=1" not in waiter
+
+    assert "nohup bash" in launcher
+    assert "watch_and_launch_gpu1_stage2_dense_selected_axis_short_20260706.sh" in launcher
+    assert "pgrep -f" in launcher
+    assert "waiter already running" in launcher
+    assert "tools/train.py" not in launcher
+    assert "torchrun" not in launcher
+    assert "srun --jobid=1118197" not in launcher
+    assert "CUDA_VISIBLE_DEVICES=1" not in launcher
