@@ -1,5 +1,6 @@
 import argparse
 import csv
+import hashlib
 import json
 import os
 import random
@@ -707,9 +708,300 @@ def axis_contract(meta):
     }
 
 
+def cfg_value(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def find_loadframes_step(split_cfg):
+    pipeline = cfg_value(split_cfg, "pipeline", []) or []
+    for step in pipeline:
+        if cfg_value(step, "type") == "LoadFrames":
+            return step
+    return None
+
+
+def route_expected_axis_contract(cfg):
+    model_cfg = cfg_value(cfg, "model", {}) or {}
+    head_cfg = cfg_value(model_cfg, "rpn_head", {}) or {}
+    route_contract = cfg_value(head_cfg, "route_contract", {}) or {}
+    expected = cfg_value(route_contract, "expected_axis_contract", None)
+    if expected is None:
+        return None
+    return {
+        "gt_axis": cfg_value(expected, "gt_axis", None),
+        "proposal_axis": cfg_value(expected, "proposal_axis", None),
+        "postprocess_axis": cfg_value(expected, "postprocess_axis", None),
+    }
+
+
+def loader_axis_contract_from_loadframes(loadframes_step):
+    if loadframes_step is None:
+        return None
+    remap = bool(cfg_value(loadframes_step, "remap_gt_to_selected_axis", True))
+    gt_axis = "selected" if remap else "native"
+    return {
+        "gt_axis": gt_axis,
+        "proposal_axis": gt_axis,
+        "postprocess_axis": "native",
+    }
+
+
+def same_batch_config_contract(cfg, split, config_path):
+    split_cfg = cfg_value(cfg_value(cfg, "dataset", {}) or {}, split)
+    loadframes_step = find_loadframes_step(split_cfg)
+    remap = None
+    if loadframes_step is not None:
+        remap = bool(cfg_value(loadframes_step, "remap_gt_to_selected_axis", True))
+    loader_contract = loader_axis_contract_from_loadframes(loadframes_step)
+    expected_contract = route_expected_axis_contract(cfg)
+
+    if loader_contract is not None and expected_contract is not None and loader_contract != expected_contract:
+        raise ValueError(
+            "same-batch assignment audit config axis mismatch: "
+            f"{config_path} route expected_axis_contract={expected_contract} disagrees with "
+            f"LoadFrames remap_gt_to_selected_axis={remap} contract={loader_contract}. "
+            "Do not reuse a sampled batch across native-axis and selected-axis contracts."
+        )
+
+    effective_contract = expected_contract or loader_contract
+    return {
+        "config": str(config_path),
+        "split": split,
+        "has_loadframes": loadframes_step is not None,
+        "remap_gt_to_selected_axis": remap,
+        "loader_axis_contract": loader_contract,
+        "expected_axis_contract": expected_contract,
+        "effective_axis_contract": effective_contract,
+    }
+
+
+def axis_contract_key(contract):
+    axis = contract.get("effective_axis_contract")
+    if axis is None:
+        axis_key = None
+    else:
+        axis_key = (axis.get("gt_axis"), axis.get("proposal_axis"), axis.get("postprocess_axis"))
+    return (contract.get("remap_gt_to_selected_axis"), axis_key)
+
+
+def assert_same_batch_axis_compatible(contracts):
+    if len(contracts) <= 1:
+        return
+    first_key = axis_contract_key(contracts[0])
+    mismatches = [contract for contract in contracts[1:] if axis_contract_key(contract) != first_key]
+    if not mismatches:
+        return
+
+    details = "; ".join(
+        (
+            f"{contract['config']}: remap_gt_to_selected_axis={contract['remap_gt_to_selected_axis']}, "
+            f"axis_contract={contract['effective_axis_contract']}"
+        )
+        for contract in contracts
+    )
+    raise ValueError(
+        "same-batch assignment audit refuses incompatible axis/remap contracts. "
+        "A sampled batch from one config cannot be silently reused for configs with different "
+        f"native-axis vs selected-axis contracts. Compared configs: {details}"
+    )
+
+
+def assert_sampled_batches_match_same_batch_contract(batches, contract):
+    expected = contract.get("effective_axis_contract")
+    if expected is None:
+        return
+
+    for batch_idx, data_dict in batches:
+        metas = data_dict.get("metas", None)
+        if metas is None:
+            raise ValueError(
+                "same-batch assignment audit requires batch metas to verify sampled batch "
+                f"axis/remap contract for {contract['config']}."
+            )
+        for sample_idx, meta in enumerate(metas):
+            observed = axis_contract(meta)
+            if observed != expected:
+                video_name = meta_value(meta, "video_name", "unknown")
+                raise ValueError(
+                    "same-batch assignment audit sampled batch axis/remap mismatch: "
+                    f"{contract['config']} expects {expected}, but batch={batch_idx} "
+                    f"sample={sample_idx} video={video_name} has {observed}. "
+                    "Do not audit native-axis configs on selected-axis batches, or selected-axis "
+                    "configs on native-axis batches."
+                )
+
+
+def load_same_batch_configs(config_paths, split):
+    configs = [Config.fromfile(config_path) for config_path in config_paths]
+    contracts = [
+        same_batch_config_contract(cfg, split, config_path)
+        for cfg, config_path in zip(configs, config_paths)
+    ]
+    assert_same_batch_axis_compatible(contracts)
+    return configs, contracts
+
+
+def normalize_for_fingerprint(obj, precision=6):
+    if torch.is_tensor(obj):
+        obj = obj.detach().cpu().tolist()
+    elif hasattr(obj, "tolist") and not isinstance(obj, (str, bytes, dict)):
+        obj = obj.tolist()
+
+    if isinstance(obj, dict):
+        return {str(key): normalize_for_fingerprint(value, precision) for key, value in sorted(obj.items())}
+    if isinstance(obj, (list, tuple)):
+        return [normalize_for_fingerprint(value, precision) for value in obj]
+    if isinstance(obj, bool) or obj is None or isinstance(obj, str):
+        return obj
+    if isinstance(obj, int):
+        return int(obj)
+    if isinstance(obj, float):
+        if obj != obj:
+            return "nan"
+        if obj == float("inf"):
+            return "inf"
+        if obj == float("-inf"):
+            return "-inf"
+        return round(float(obj), precision)
+    return str(obj)
+
+
+def stable_sha256(payload):
+    text = json.dumps(
+        normalize_for_fingerprint(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def flatten_scalars(obj):
+    obj = normalize_for_fingerprint(obj)
+    if isinstance(obj, list):
+        values = []
+        for item in obj:
+            values.extend(flatten_scalars(item))
+        return values
+    if isinstance(obj, dict):
+        values = []
+        for key in sorted(obj):
+            values.extend(flatten_scalars(obj[key]))
+        return values
+    return [obj]
+
+
+def compact_array_summary(value, preview=6):
+    normalized = normalize_for_fingerprint(value)
+    values = flatten_scalars(normalized)
+    numeric = [float(value) for value in values if isinstance(value, (int, float)) and not isinstance(value, bool)]
+    summary = {
+        "count": int(len(values)),
+        "sha256": stable_sha256(normalized),
+        "first_values": values[:preview],
+        "last_values": values[-preview:] if len(values) > preview else values[:],
+    }
+    if numeric:
+        summary["min"] = round(min(numeric), 6)
+        summary["max"] = round(max(numeric), 6)
+    return summary
+
+
+def sample_axis_value(value, sample_idx):
+    normalized = normalize_for_fingerprint(value)
+    if (
+        isinstance(normalized, list)
+        and normalized
+        and isinstance(normalized[0], list)
+        and sample_idx < len(normalized)
+    ):
+        return normalized[sample_idx]
+    return normalized
+
+
+def temporal_grid_fingerprint(temporal_grid_list, sample_idx):
+    levels = []
+    for level_idx, grid in enumerate(temporal_grid_list or []):
+        level = {"level_idx": int(level_idx)}
+        if not isinstance(grid, dict):
+            center_summary = compact_array_summary(sample_axis_value(grid, sample_idx))
+            level.update(
+                {
+                    "center_count": center_summary["count"],
+                    "center_sha256": center_summary["sha256"],
+                    "center_first_values": center_summary["first_values"],
+                    "center_last_values": center_summary["last_values"],
+                }
+            )
+            levels.append(level)
+            continue
+
+        for key in ("center", "valid_mask", "fresh_mask", "cell_left", "cell_right", "level_scale"):
+            if key not in grid:
+                continue
+            sampled = sample_axis_value(grid[key], sample_idx)
+            summary = compact_array_summary(sampled)
+            level[f"{key}_count"] = summary["count"]
+            level[f"{key}_sha256"] = summary["sha256"]
+            level[f"{key}_first_values"] = summary["first_values"]
+            level[f"{key}_last_values"] = summary["last_values"]
+            if "min" in summary:
+                level[f"{key}_min"] = summary["min"]
+                level[f"{key}_max"] = summary["max"]
+            if key in ("valid_mask", "fresh_mask"):
+                level[f"{key.split('_')[0]}_count"] = int(sum(bool(value) for value in flatten_scalars(sampled)))
+        levels.append(level)
+
+    return {
+        "level_count": int(len(levels)),
+        "levels": levels,
+        "sha256": stable_sha256(levels),
+    }
+
+
+def make_sample_fingerprint(meta, gt_segment, gt_label, temporal_grid_list, sample_idx, axes):
+    selected_positions = meta_value(meta, "irregular_selected_positions", None)
+    selected_valid_len = meta_value(meta, "irregular_selected_valid_len", None)
+    gt_segments_summary = compact_array_summary(gt_segment)
+    gt_labels_summary = compact_array_summary(gt_label)
+    selected_summary = compact_array_summary(selected_positions if selected_positions is not None else [])
+    temporal_grid_summary = temporal_grid_fingerprint(temporal_grid_list, sample_idx)
+    payload = {
+        "version": 1,
+        "video_name": meta_value(meta, "video_name", "unknown"),
+        "window_start": meta_value(meta, "window_start", meta_value(meta, "snippet_start", None)),
+        "snippet_start": meta_value(meta, "snippet_start", None),
+        "duration": meta_value(meta, "duration", None),
+        "axis_contract": axes,
+        "irregular_native_axis": bool(meta_value(meta, "irregular_native_axis", False)),
+        "gt": {
+            "num_segments": int(len(normalize_for_fingerprint(gt_segment))),
+            "segments_sha256": gt_segments_summary["sha256"],
+            "segments_first_values": gt_segments_summary["first_values"],
+            "segments_last_values": gt_segments_summary["last_values"],
+            "labels_sha256": gt_labels_summary["sha256"],
+            "labels_first_values": gt_labels_summary["first_values"],
+            "labels_last_values": gt_labels_summary["last_values"],
+        },
+        "selected_axis": {
+            "has_metadata": selected_positions is not None and selected_valid_len is not None,
+            "valid_len": normalize_for_fingerprint(selected_valid_len),
+            "positions_count": selected_summary["count"],
+            "positions_sha256": selected_summary["sha256"],
+            "positions_first_values": selected_summary["first_values"],
+            "positions_last_values": selected_summary["last_values"],
+        },
+        "temporal_grid": temporal_grid_summary,
+    }
+    payload["sha256"] = stable_sha256(payload)
+    return payload
+
+
 @torch.no_grad()
-def audit_config(config_path, batches, split, device):
-    cfg = Config.fromfile(config_path)
+def audit_config(config_path, batches, split, device, cfg=None):
+    cfg = Config.fromfile(config_path) if cfg is None else cfg
     model = build_detector(cfg.model).to(device)
     model.eval()
     head = model.rpn_head
@@ -745,6 +1037,14 @@ def audit_config(config_path, batches, split, device):
             meta = metas[sample_idx] if metas is not None else {}
             sample_id = make_sample_id(batch_idx, sample_idx, meta)
             axes = axis_contract(meta)
+            fingerprint = make_sample_fingerprint(
+                meta=meta,
+                gt_segment=gt_segment,
+                gt_label=gt_label,
+                temporal_grid_list=temporal_grid_list,
+                sample_idx=sample_idx,
+                axes=axes,
+            )
             assignment_mode = getattr(head, "assignment_mode", "unknown")
             diag = build_hard_diagnostics(head, point, gt_segment, offsets)
             assigned = diag.pop("assigned_gt")
@@ -818,6 +1118,8 @@ def audit_config(config_path, batches, split, device):
                 "sample_idx": int(sample_idx),
                 "sample_id": sample_id,
                 "video_name": meta_value(meta, "video_name", "unknown"),
+                "sample_fingerprint_sha256": fingerprint["sha256"],
+                "sample_fingerprint": fingerprint,
                 "gt_axis": axes["gt_axis"],
                 "proposal_axis": axes["proposal_axis"],
                 "postprocess_axis": axes["postprocess_axis"],
@@ -905,7 +1207,8 @@ def main():
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device)
 
-    first_cfg = Config.fromfile(args.configs[0])
+    configs, contracts = load_same_batch_configs(args.configs, args.split)
+    first_cfg = configs[0]
     loader = build_loader(first_cfg, args.split)
     batches = []
     for batch_idx, data_dict in enumerate(loader):
@@ -914,10 +1217,11 @@ def main():
         batches.append((batch_idx, data_dict))
     if not batches:
         raise RuntimeError("No batches were loaded for assignment audit.")
+    assert_sampled_batches_match_same_batch_contract(batches, contracts[0])
 
     all_rows = []
-    for config_path in args.configs:
-        all_rows.extend(audit_config(config_path, batches, args.split, device))
+    for config_path, cfg in zip(args.configs, configs):
+        all_rows.extend(audit_config(config_path, batches, args.split, device, cfg=cfg))
 
     json_path, csv_path = write_outputs(all_rows, Path(args.out))
     print(f"Wrote {len(all_rows)} audit rows")
