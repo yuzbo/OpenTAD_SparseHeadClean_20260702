@@ -413,3 +413,14 @@ Reference snapshot:
   - Remote synced marker: `.codex_synced_commit=81c93cec133da0bb044e882de709ccfd98941599`.
   - Remote: `bash -n remote_runs/*.sh`, `pytest tests/test_fail_closed_static_gates.py -q`, and Stage-2 short preflight all passed.
 - Deployment status: Stage-2 short training has not been launched yet because `g0030/GPU1` is currently occupied by another C3/paction step (`1118197.669`, `CUDA_VISIBLE_DEVICES=1`). Do not launch the Stage-2 short smoke until GPU1 is free.
+
+## Stage-2 Waiter and Stage-4 Quality Runner - 2026-07-06
+
+- Added `remote_runs/watch_and_launch_gpu1_stage2_dense_selected_axis_short_20260706.sh` and `remote_runs/launch_watch_gpu1_stage2_dense_selected_axis_short_20260706.sh`.
+  - The waiter does not train or reserve GPU by itself.
+  - It launches the two-epoch Stage-2 dense selected-axis short smoke only when GPU1 memory is below `100 MiB` and the current allocation has no extra active step beyond the known allowed `1118197.660`, `.batch`, and `.extern` steps.
+  - Latest deployed status at commit `86db984`: waiter is running, sees `g0030/GPU1` busy (`mem_mib=3959`, `compute_apps=1`, `other_steps=1` from step `1118197.669`), and is sleeping without launching training.
+- Added `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`.
+  - It is CPU-only and runs `tools/analyze_detection_quality.py` over Stage-2 dense short/long outputs once `result_detection.json` exists.
+  - Remote preflight passed: fail-closed config scan ok, `py_compile` ok, and current no-result state safely reports `analyzed=0 missing=4`.
+- Current next gate remains: wait for GPU1 to become free, let the Stage-2 short smoke run, then run the Stage-4 quality runner before deciding whether to submit Stage-2 dense long jobs through `sbatch`.
