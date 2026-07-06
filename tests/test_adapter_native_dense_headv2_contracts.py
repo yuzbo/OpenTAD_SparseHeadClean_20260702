@@ -598,6 +598,35 @@ def test_uniform_fixed_50pct_controls_keep_axis_contracts_and_only_change_sampli
         assert not bool(step.remap_gt_to_selected_axis)
 
 
+def test_uniform_fixed_50pct_remote_launchers_are_gpu1_slurm_preflighted():
+    dense_runner = read("remote_runs/run_gpu1_uniform_fixed_dense_control_long_20260706.sh")
+    dense_launcher = read("remote_runs/launch_gpu1_uniform_fixed_dense_control_long_20260706.sh")
+    bridge_runner = read("remote_runs/run_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh")
+    bridge_launcher = read("remote_runs/launch_gpu1_uniform_fixed_bridge_absrange_expanded_long_20260706.sh")
+
+    assert "input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py" in dense_runner
+    assert "gpu1_uniform_fixed_dense_control_long" in dense_runner
+    assert "head= ActionFormerHead" not in dense_runner
+    assert "CUDA_VISIBLE_DEVICES=1" in dense_runner
+    assert "config load preflight" in dense_runner
+    assert "py_compile preflight" in dense_runner
+    assert "torchrun" in dense_runner
+    assert "--nproc_per_node=1" in dense_runner
+
+    assert "input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py" in bridge_runner
+    assert "gpu1_uniform_fixed_bridge_absrange_expanded_long" in bridge_runner
+    assert "CUDA_VISIBLE_DEVICES=1" in bridge_runner
+    assert "config load preflight" in bridge_runner
+    assert "py_compile preflight" in bridge_runner
+    assert "torchrun" in bridge_runner
+    assert "--nproc_per_node=1" in bridge_runner
+
+    for launcher in (dense_launcher, bridge_launcher):
+        assert "srun --jobid=1118197" in launcher
+        assert "--overlap -w g0030 -N1 -n1" in launcher
+        assert "CUDA_VISIBLE_DEVICES=1" in launcher
+
+
 def test_loadframes_records_explicit_axis_contract_metadata():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
