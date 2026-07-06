@@ -262,6 +262,7 @@ class LoadFrames:
         sampling_action_weight=2.0,
         sampling_background_weight=1.0,
         remap_gt_to_selected_axis=True,
+        allow_drop_selected_axis_gt=False,
         store_dense_window=False,
         pseudo_boundary_cache_dir=None,
         pseudo_boundary_quota=64,
@@ -305,6 +306,7 @@ class LoadFrames:
         self.sampling_action_weight = sampling_action_weight
         self.sampling_background_weight = sampling_background_weight
         self.remap_gt_to_selected_axis = remap_gt_to_selected_axis
+        self.allow_drop_selected_axis_gt = bool(allow_drop_selected_axis_gt)
         self.store_dense_window = store_dense_window
         self.pseudo_boundary_cache_dir = pseudo_boundary_cache_dir
         self.pseudo_boundary_quota = pseudo_boundary_quota
@@ -683,11 +685,18 @@ class LoadFrames:
         coord = float(np.clip(coord, 0.0, float(valid_len)))
         return float(np.interp(coord, xp, fp))
 
-    def _remap_gt_to_selected_axis(self, gt_segments, gt_labels, kept_positions, valid_len):
+    def _clear_selected_axis_gt_drop_state(self):
         self._last_dropped_selected_axis_gt_segments = []
+        self._last_selected_axis_gt_input_count = 0
+        self._last_selected_axis_gt_keep_count = 0
+        self._last_selected_axis_gt_drop_count = 0
+
+    def _remap_gt_to_selected_axis(self, gt_segments, gt_labels, kept_positions, valid_len):
+        self._clear_selected_axis_gt_drop_state()
         if gt_segments is None or gt_labels is None or len(gt_segments) == 0 or kept_positions.size == 0:
             return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
+        self._last_selected_axis_gt_input_count = int(len(gt_segments))
         remapped_segments = []
         remapped_labels = []
         max_coord = float(kept_positions.size)
@@ -710,6 +719,21 @@ class LoadFrames:
                 remapped_segments.append([start, end])
                 remapped_labels.append(int(gt_labels[idx]))
 
+        self._last_selected_axis_gt_drop_count = int(len(self._last_dropped_selected_axis_gt_segments))
+        self._last_selected_axis_gt_keep_count = int(len(remapped_segments))
+        if self._last_selected_axis_gt_drop_count > 0 and not bool(
+            getattr(self, "allow_drop_selected_axis_gt", False)
+        ):
+            video_name = getattr(self, "_current_video_name", "unknown")
+            raise ValueError(
+                "selected-axis GT remap dropped/collapsed ground truth for "
+                f"video={video_name}: dropped={self._last_selected_axis_gt_drop_count}, "
+                f"kept={self._last_selected_axis_gt_keep_count}, "
+                f"input={self._last_selected_axis_gt_input_count}, "
+                f"valid_len={valid_len}, kept_positions={int(kept_positions.size)}. "
+                "Set allow_drop_selected_axis_gt=True only for legacy/diagnostic routes."
+            )
+
         if len(remapped_segments) == 0:
             return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
         return np.asarray(remapped_segments, dtype=np.float32), np.asarray(remapped_labels, dtype=np.int32)
@@ -721,6 +745,10 @@ class LoadFrames:
         results["dropped_selected_axis_gt_segments"] = list(
             getattr(self, "_last_dropped_selected_axis_gt_segments", [])
         )
+        results["selected_axis_gt_input_count"] = int(getattr(self, "_last_selected_axis_gt_input_count", 0))
+        results["selected_axis_gt_keep_count"] = int(getattr(self, "_last_selected_axis_gt_keep_count", 0))
+        results["selected_axis_gt_drop_count"] = int(getattr(self, "_last_selected_axis_gt_drop_count", 0))
+        results["allow_drop_selected_axis_gt"] = bool(getattr(self, "allow_drop_selected_axis_gt", False))
         results["irregular_native_axis"] = bool(not self.remap_gt_to_selected_axis)
         gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"
         proposal_axis = gt_axis
@@ -757,7 +785,7 @@ class LoadFrames:
                 valid_len=valid_len,
             )
         else:
-            self._last_dropped_selected_axis_gt_segments = []
+            self._clear_selected_axis_gt_drop_state()
             out_segments, out_labels = gt_segments, gt_labels
 
         frame_num = int(target_frame_num)
@@ -800,7 +828,7 @@ class LoadFrames:
                 valid_len=valid_len,
             )
         else:
-            self._last_dropped_selected_axis_gt_segments = []
+            self._clear_selected_axis_gt_drop_state()
             out_segments, out_labels = gt_segments, gt_labels
 
         frame_num = int(target_frame_num)
@@ -821,6 +849,8 @@ class LoadFrames:
 
     def __call__(self, results):
         assert "total_frames" in results.keys(), "should have total_frames as a key"
+        self._current_video_name = results.get("video_name", "unknown")
+        self._clear_selected_axis_gt_drop_state()
         self._assert_no_eval_diagnostic_shortcuts(results)
         total_frames = results["total_frames"]
         fps = results.get("avg_fps", results.get("fps", None))
@@ -1089,11 +1119,11 @@ class LoadFrames:
                         valid_len=valid_len,
                     )
                 else:
-                    self._last_dropped_selected_axis_gt_segments = []
+                    self._clear_selected_axis_gt_drop_state()
                 results["gt_segments"] = gt_segments / self.scale_factor
                 results["gt_labels"] = gt_labels
             else:
-                self._last_dropped_selected_axis_gt_segments = []
+                self._clear_selected_axis_gt_drop_state()
             self._set_irregular_axis_meta(results, keep_positions, valid_len)
 
             if len(frame_idxs) < frame_num:

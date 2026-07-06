@@ -1448,6 +1448,7 @@ def test_loadframes_selected_axis_remap_drops_collapsed_segments_on_linux():
 
     end_to_end = pytest.importorskip("opentad.datasets.transforms.end_to_end")
     loader = object.__new__(end_to_end.LoadFrames)
+    loader.allow_drop_selected_axis_gt = True
 
     segments, labels = loader._remap_gt_to_selected_axis(
         gt_segments=np.asarray([[12.0, 13.0], [0.0, 5.0]], dtype=np.float32),
@@ -1479,7 +1480,7 @@ def test_selected_axis_helper_paths_clear_dropped_gt_state_for_native_axis():
         start = load_frames_impl.index(f"def {func_name}(")
         end = load_frames_impl.index("        frame_num = int(target_frame_num)", start)
         helper = load_frames_impl[start:end]
-        assert "else:\n            self._last_dropped_selected_axis_gt_segments = []" in helper
+        assert "else:\n            self._clear_selected_axis_gt_drop_state()" in helper
 
 
 def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dump_helper():
@@ -1522,7 +1523,12 @@ def test_selected_axis_fractional_roundtrip_matches_native_seconds_on_linux():
     expected_seconds = torch.tensor([[17.5, 35.0], [52.5, 97.5]], dtype=torch.float32)
 
     native_segments = post_utils.selected_axis_to_dense_axis(selected_segments, meta)
-    selected_to_seconds = post_utils.convert_to_seconds(selected_segments.clone(), meta)
+    selected_to_seconds = post_utils.convert_to_seconds(
+        selected_segments.clone(),
+        meta,
+        source_axis="auto",
+        allow_auto_axis=True,
+    )
     selected_to_seconds_explicit = post_utils.convert_to_seconds(
         selected_segments.clone(),
         meta,
@@ -1790,7 +1796,7 @@ def test_official_dense_selected_axis_sanity_uses_selected_proposals_native_post
     assert "selected_axis_to_dense_axis" in detector_impl
     assert "segments = self._segments_to_axis(" in detector_impl
     assert detector_impl.index("segments = self._segments_to_axis(") < detector_impl.index("batched_nms(")
-    assert "convert_to_seconds(segments, meta, source_axis=source_axis)" in detector_impl
+    assert "convert_to_seconds(segments, meta, source_axis=source_axis, strict=True)" in detector_impl
 
 
 def test_official_dense_selected_axis_precheck_is_fail_closed_and_non_training():

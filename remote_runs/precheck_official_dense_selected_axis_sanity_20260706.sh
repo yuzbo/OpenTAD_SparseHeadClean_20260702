@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CFG="configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
+LOG_DIR="${LOG_DIR:-$ROOT/logs/precheck_official_dense_selected_axis_sanity}"
+RUN_TAG="${RUN_TAG:-precheck_official_dense_selected_axis_sanity_$(date +%Y%m%d_%H%M%S)}"
+FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 
 cd "$ROOT"
 
@@ -29,6 +32,12 @@ else
     exit 127
   fi
 fi
+
+mkdir -p "$LOG_DIR"
+
+echo "fail-closed config scan: $CFG"
+"$PYTHON_BIN" tools/check_fail_closed_config.py "$CFG" --json-out "$FAIL_CLOSED_JSON"
+echo "fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 echo "config load preflight: $CFG"
 "$PYTHON_BIN" scripts/verify_official_dense_reference.py \

@@ -9,12 +9,16 @@ PRECHECK_ONLY="${PRECHECK_ONLY:-1}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
 RUN_PYTEST="${RUN_PYTEST:-1}"
 PYTHON_BIN="${PYTHON_BIN:-}"
+LOG_DIR="${LOG_DIR:-$ROOT/logs/bridge_absrange_expanded_shortgate_failclosed}"
+RUN_TAG="${RUN_TAG:-shortgate_failclosed_$(date +%Y%m%d_%H%M%S)}"
+FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 
 log_msg() { echo "$(date '+%F %T') $*"; }
 _python_works() { "$1" -c "import sys" >/dev/null 2>&1; }
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
+mkdir -p "$LOG_DIR"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if command -v python >/dev/null 2>&1 && _python_works python; then
@@ -34,6 +38,10 @@ fi
 
 log_msg "shortgate fail-closed helper root=$ROOT cfg=$CFG exp_id=$EXP_ID"
 log_msg "PRECHECK_ONLY=$PRECHECK_ONLY RUN_TRAIN=$RUN_TRAIN RUN_PYTEST=$RUN_PYTEST PYTHON_BIN=$PYTHON_BIN"
+
+log_msg "fail-closed config scan"
+"$PYTHON_BIN" tools/check_fail_closed_config.py "$CFG" --json-out "$FAIL_CLOSED_JSON"
+log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 log_msg "config load preflight"
 "$PYTHON_BIN" - "$CFG" <<'PY'

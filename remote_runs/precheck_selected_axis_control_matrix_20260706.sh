@@ -3,6 +3,9 @@ set -euo pipefail
 
 BASE="${BASE:-/data/run01/sczc063/yuzibo}"
 ROOT="${ROOT:-$BASE/OpenTAD_SparseHeadClean_20260702}"
+LOG_DIR="${LOG_DIR:-$ROOT/logs/precheck_selected_axis_control_matrix}"
+RUN_TAG="${RUN_TAG:-precheck_selected_axis_control_matrix_$(date +%Y%m%d_%H%M%S)}"
+FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 
 CONFIGS=(
   "configs/adatad/thumos/input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py"
@@ -12,6 +15,11 @@ CONFIGS=(
 
 cd "$ROOT"
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
+mkdir -p "$LOG_DIR"
+
+echo "[precheck] fail-closed config scan"
+python tools/check_fail_closed_config.py "${CONFIGS[@]}" --json-out "$FAIL_CLOSED_JSON"
+echo "[precheck] fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 echo "[precheck] selected-axis control config load"
 python - "${CONFIGS[@]}" <<'PY'

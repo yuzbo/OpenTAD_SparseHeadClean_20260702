@@ -7,6 +7,7 @@ LOG_DIR="$ROOT/logs/gpu1_same_batch_audit"
 RUN_TAG="${RUN_TAG:-same_batch_audit_$(date +%Y%m%d_%H%M%S)}"
 OUT_DIR="${OUT_DIR:-$ROOT/logs/sparse_head_assignment_audit_20260705/$RUN_TAG}"
 CHAIN_LOG="$LOG_DIR/${RUN_TAG}.log"
+FAIL_CLOSED_JSON="$OUT_DIR/fail_closed_config.json"
 
 mkdir -p "$LOG_DIR" "$OUT_DIR"
 exec > >(tee -a "$CHAIN_LOG") 2>&1
@@ -36,6 +37,10 @@ CONFIGS=(
   "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py"
   "configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py"
 )
+
+echo "[audit] fail-closed config scan"
+python tools/check_fail_closed_config.py "${CONFIGS[@]}" --json-out "$FAIL_CLOSED_JSON"
+echo "[audit] fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 echo "[audit] config load preflight"
 python - "${CONFIGS[@]}" <<'PY'

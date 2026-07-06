@@ -330,3 +330,47 @@ Reference snapshot:
 - Added focused numeric regression coverage for the selected/native/seconds post-processing contract. The guard uses fractional selected-axis coordinates, irregular selected positions, non-unit `fps`, `snippet_stride`, `window_start_frame`, and `offset_frames` to verify that `selected -> seconds` matches `selected -> native -> seconds`.
 - Strengthened the selected-axis post-processing behavior test so monkeypatched NMS receives native-axis proposal coordinates before suppression, and final seconds conversion does not apply selected-to-native interpolation a second time.
 - Evidence boundary: these tests guard coordinate conversion regressions only. They do not provide mAP evidence, do not validate training quality, and do not prove that the sparse-head route recovers the official dense baseline.
+
+## Pro Review FAIL on Fixed SHA 06dce3d - 2026-07-06
+
+- Full response recorded verbatim in `pro-review-fixed-sha-fail-20260706.md`.
+- Source attachment SHA256: `A2BAC06990E0435A4EB8C8BDBB9FCD41282E0E57FD279E28EE6E9A65A5CFFDBF`.
+- Reviewed commit: `06dce3d5955e9c2d0cf5232eace6b4224831900f` (`Harden sparse head route diagnostics`).
+- Verdict absorbed as **FAIL for route correctness / dense-equivalence claim**, not as "no progress":
+  - The commit made real hardening progress for bridge scale contracts, route metadata, selected/native axis checks, postprocess conversion, audit tooling, and tests.
+  - It still does not prove that the sparse/irregular route is official-compatible, nor explain the `65/63 -> 40/42` collapse.
+  - `HeadV3 fixed=40.20` and `bridge hard openrange=42.44` must remain diagnostic results only.
+- Current allowed claim boundary:
+  - Bridge hard official-compatible diagnostics are closer to auditable.
+  - `official_actionformer` point generation rejects irregular centers and locks absolute range + level-stride scale.
+  - Bridge hard no longer uses V2/V3 missing-center fallback.
+  - The detector main path tends to convert selected proposals to native before NMS.
+  - `check_fail_closed_config.py` can prevent some legacy routes from being mislabeled as dense-equivalent if it is part of mandatory preflight.
+- Current forbidden claims:
+  - Do not claim `40/42` is natural sparse/random sampling degradation.
+  - Do not claim `HeadV3` is an official ActionFormer-equivalent irregular implementation.
+  - Do not claim `openrange` is official-compatible sparse performance.
+  - Do not claim selected-axis GT remap, utility conversion paths, and all scripts are fully fail-closed.
+- Newly absorbed blockers before full training or dense-equivalent claims:
+  - **S0:** `HeadV2/V3` still differ from official ActionFormer via soft assignment, log1p regression, geometry modulation, and V2/V3 missing-center fallback behavior.
+  - **S0:** selected-axis GT remap can silently drop collapsed GT; default behavior must become fail-closed, with explicit legacy/diagnostic opt-in only.
+  - **S1:** low-level postprocess utilities still allow fail-open selected-axis conversion in some paths; strict mode should become the irregular-route default, and `source_axis="auto"` must be forbidden for irregular metadata unless explicitly allowed.
+  - **S1:** native irregular cell geometry and legacy full-cell-span/openrange routes are diagnostics only, not dense-equivalent evidence.
+  - **S1:** config scanner protection is not enough unless enforced by every launch/preflight path.
+- Required code-prep items from this review:
+  - Add strict selected-axis conversion helpers in `opentad/models/utils/post_processing/utils.py`.
+  - Require `metas` for `IrregularActionFormer` train/test/postprocess paths; forbid bypassing axis contracts.
+  - Add `allow_center_fallback_inside_gt=False` as a first-class V2/V3 contract and block dense-equivalent claims when fallback or soft route is active.
+  - Make selected-axis GT drop fail closed in `LoadFrames`, unless a config explicitly declares legacy/diagnostic allowance.
+  - Force `check_fail_closed_config.py` into all launch/preflight scripts before training/eval/claim.
+- Required experiment order remains:
+  - Stage 0 Linux preflight: config load, `py_compile`, pytest, fail-closed scanner.
+  - Stage 1 same-batch assignment/decode audit, with native and selected batches separated.
+  - Stage 2 official/dense selected-axis sanity; random-fixed dense selected-axis should recover near historical `63.12`, uniform near `65.09`.
+  - Stage 3 bridge selected/native controls only after Stage 0-2 pass.
+  - Stage 4 HeadV2/V3 soft-assignment analysis only after bridge/dense contracts are clean.
+- Updated root-cause ordering:
+  - If dense selected-axis sanity also collapses, first suspect `end_to_end.py` GT remap, selected-axis metadata, seconds conversion, or NMS axis.
+  - If dense selected-axis passes but bridge selected-axis collapses, first suspect bridge encode/decode scale, point layout, or target contract.
+  - If bridge selected-axis passes but native bridge collapses, first suspect selected-to-native conversion, native temporal grid cell geometry, NMS axis, or duration clipping.
+  - If bridge selected/native pass but HeadV3 remains near `40.20`, first suspect V2/V3 soft assignment, missing-center fallback, log1p regression, geometry modulation, and boundary auxiliary mixing.

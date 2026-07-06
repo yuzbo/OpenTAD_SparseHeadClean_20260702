@@ -111,7 +111,7 @@ class IrregularActionFormer(BaseDetector):
 
     def _assert_axis_contracts(self, metas, stage="runtime"):
         if metas is None:
-            return
+            raise ValueError(f"IrregularActionFormer requires metas for axis contracts at {stage}.")
         for meta in metas:
             self._assert_axis_contract(meta, stage=stage)
 
@@ -120,13 +120,13 @@ class IrregularActionFormer(BaseDetector):
             return segments
         if source_axis == "selected" and target_axis == "native":
             self._require_selected_axis_meta(meta, "proposal_axis_conversion")
-            return selected_axis_to_dense_axis(segments, meta)
+            return selected_axis_to_dense_axis(segments, meta, strict=True)
         raise ValueError(f"Unsupported proposal axis conversion: {source_axis} -> {target_axis}")
 
     def _segments_to_seconds(self, segments, meta, source_axis):
         if source_axis == "selected":
             self._require_selected_axis_meta(meta, "seconds_conversion")
-        return convert_to_seconds(segments, meta, source_axis=source_axis)
+        return convert_to_seconds(segments, meta, source_axis=source_axis, strict=True)
 
     def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None):
         self._assert_axis_contract(meta, stage="proposal_debug")

@@ -49,13 +49,57 @@ def load_predictions(metas, infer_cfg):
         return load_single_prediction(metas, infer_cfg.folder)
 
 
-def selected_axis_to_dense_axis(coords, meta):
+def _has_selected_axis_meta(meta):
+    return (
+        meta is not None
+        and meta.get("irregular_selected_positions", None) is not None
+        and meta.get("irregular_selected_valid_len", None) is not None
+    )
+
+
+def _validate_selected_axis_meta(coords, meta, positions, valid_len):
+    if meta.get("irregular_native_axis", False):
+        raise ValueError("strict selected-axis conversion received irregular_native_axis=True metadata.")
+    if positions.numel() == 0:
+        raise ValueError("strict selected-axis conversion requires non-empty irregular_selected_positions.")
+    if not torch.isfinite(positions).all():
+        raise ValueError("strict selected-axis conversion requires finite irregular_selected_positions.")
+    valid_len_tensor = torch.as_tensor(valid_len, dtype=coords.dtype, device=coords.device)
+    if valid_len_tensor.numel() != 1 or not torch.isfinite(valid_len_tensor).all():
+        raise ValueError("strict selected-axis conversion requires finite irregular_selected_valid_len.")
+    valid_len_value = float(valid_len_tensor.item())
+    if valid_len_value <= 0:
+        raise ValueError("strict selected-axis conversion requires positive irregular_selected_valid_len.")
+    if positions.numel() > 1 and not (positions[1:] > positions[:-1]).all():
+        raise ValueError("strict selected-axis conversion requires monotonic increasing irregular_selected_positions.")
+    if float(positions[0].item()) < 0.0 or float(positions[-1].item()) > valid_len_value:
+        raise ValueError(
+            "strict selected-axis conversion requires irregular_selected_positions within "
+            "irregular_selected_valid_len."
+        )
+    if not torch.isfinite(coords).all():
+        raise ValueError("strict selected-axis conversion requires finite coordinates.")
+
+
+def selected_axis_to_dense_axis(coords, meta, strict=False):
+    if meta is None:
+        if strict:
+            raise ValueError("strict selected-axis conversion requires selected-axis metadata.")
+        return coords
+
     positions = meta.get("irregular_selected_positions", None)
     valid_len = meta.get("irregular_selected_valid_len", None)
     if positions is None or valid_len is None or meta.get("irregular_native_axis", False):
+        if strict:
+            raise ValueError(
+                "strict selected-axis conversion requires irregular_selected_positions, "
+                "irregular_selected_valid_len, and selected-axis metadata."
+            )
         return coords
 
     positions = torch.as_tensor(positions, dtype=coords.dtype, device=coords.device).reshape(-1)
+    if strict:
+        _validate_selected_axis_meta(coords, meta, positions, valid_len)
     if positions.numel() == 0:
         return coords
 
@@ -138,7 +182,7 @@ def apply_visibility_rescore(scores, segments, meta, cfg=None):
     return scores * factor
 
 
-def convert_to_seconds(segments, meta, source_axis="auto"):
+def convert_to_seconds(segments, meta, source_axis="auto", strict=False, allow_auto_axis=False):
     if source_axis not in {"auto", "selected", "native"}:
         raise ValueError(f"Unsupported source_axis for convert_to_seconds: {source_axis}")
 
@@ -153,10 +197,15 @@ def convert_to_seconds(segments, meta, source_axis="auto"):
             )
         selected_meta = dict(meta)
         selected_meta["irregular_native_axis"] = False
-        segments = selected_axis_to_dense_axis(segments, selected_meta)
+        segments = selected_axis_to_dense_axis(segments, selected_meta, strict=True)
     elif source_axis == "auto":
         if has_selected_axis_meta and not meta.get("irregular_native_axis", False):
-            segments = selected_axis_to_dense_axis(segments, meta)
+            if not allow_auto_axis:
+                raise ValueError(
+                    "convert_to_seconds(source_axis='auto') is rejected for irregular selected-axis metadata; "
+                    "pass source_axis='selected'/'native' or allow_auto_axis=True for legacy diagnostics."
+                )
+            segments = selected_axis_to_dense_axis(segments, meta, strict=True)
 
     if meta["fps"] == -1:  # resize setting, like in anet / hacs
         segments = segments / meta["resize_length"] * meta["duration"]

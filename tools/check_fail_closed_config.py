@@ -65,6 +65,7 @@ def scan_config_object(obj, path="cfg"):
     items = _iter_items(obj)
     if items is not None:
         violations.extend(scan_route_contract_object(obj, path))
+        violations.extend(scan_loadframes_contract_object(obj, path))
         for key, value in items:
             key_str = str(key)
             child_path = f"{path}.{key_str}"
@@ -104,6 +105,13 @@ def _is_bridge_head_like(obj):
     return head_type == "IrregularActionFormerBridgeHead" or "allow_legacy_full_cell_span" in obj
 
 
+def _is_v2_v3_sparse_head(obj):
+    obj = _plain_value(obj)
+    if not isinstance(obj, dict):
+        return False
+    return str(obj.get("type", "")) in {"IrregularActionFormerHeadV2", "IrregularActionFormerHeadV3"}
+
+
 def _violation(path, key, value, reason):
     return {"path": f"{path}.{key}", "key": key, "value": repr(_plain_value(value)), "reason": reason}
 
@@ -112,10 +120,44 @@ def scan_route_contract_object(obj, path):
     obj = _plain_value(obj)
     if path.endswith(".route_contract"):
         return []
-    if not isinstance(obj, dict) or not _is_bridge_head_like(obj):
+    if not isinstance(obj, dict):
         return []
 
     violations = []
+    if _is_v2_v3_sparse_head(obj):
+        contract = _dict_get(obj, "route_contract", {})
+        contract = contract if isinstance(contract, dict) else {}
+        dense_claim = bool(_dict_get(obj, "dense_equivalent_claim_allowed", False)) or bool(
+            _dict_get(contract, "dense_equivalent_claim_allowed", False)
+        )
+        uses_center_fallback = bool(_dict_get(obj, "allow_center_fallback_inside_gt", False))
+        uses_soft_route = "soft_assign_topk" in obj or str(_dict_get(obj, "assignment_mode", "")).lower() == "soft"
+        if dense_claim and (uses_soft_route or uses_center_fallback):
+            violations.append(
+                _violation(
+                    path,
+                    "route_contract.dense_equivalent_claim_allowed",
+                    _dict_get(contract, "dense_equivalent_claim_allowed", _dict_get(obj, "dense_equivalent_claim_allowed")),
+                    "dense-equivalent claim is forbidden for V2/V3 soft-assignment or missing-center fallback routes",
+                )
+            )
+
+        if contract:
+            contract_center_fallback = bool(_dict_get(contract, "allow_center_fallback_inside_gt", False))
+            if contract_center_fallback != uses_center_fallback:
+                violations.append(
+                    _violation(
+                        f"{path}.route_contract",
+                        "allow_center_fallback_inside_gt",
+                        contract_center_fallback,
+                        "route_contract contradicts V2/V3 allow_center_fallback_inside_gt",
+                    )
+                )
+        return violations
+
+    if not _is_bridge_head_like(obj):
+        return []
+
     contract = _dict_get(obj, "route_contract", {})
     contract = contract if isinstance(contract, dict) else {}
     uses_legacy_full_cell_span = bool(_dict_get(obj, "allow_legacy_full_cell_span", False))
@@ -184,6 +226,30 @@ def scan_route_contract_object(obj, path):
                 f"route_contract compatibility must be {expected_compatibility!r} for this bridge route",
             )
         )
+    return violations
+
+
+def scan_loadframes_contract_object(obj, path):
+    obj = _plain_value(obj)
+    if not isinstance(obj, dict) or str(obj.get("type", "")) != "LoadFrames":
+        return []
+
+    violations = []
+    remaps_selected_gt = bool(_dict_get(obj, "remap_gt_to_selected_axis", True))
+    allows_gt_drop = bool(_dict_get(obj, "allow_drop_selected_axis_gt", False))
+    if remaps_selected_gt and allows_gt_drop:
+        diagnostic_opt_in = bool(_dict_get(obj, "legacy_selected_axis_gt_drop_diagnostic", False)) or bool(
+            _dict_get(obj, "diagnostic_only", False)
+        )
+        if not diagnostic_opt_in:
+            violations.append(
+                _violation(
+                    path,
+                    "allow_drop_selected_axis_gt",
+                    allows_gt_drop,
+                    "selected-axis GT drop/collapse opt-in requires an explicit legacy/diagnostic marker",
+                )
+            )
     return violations
 
 

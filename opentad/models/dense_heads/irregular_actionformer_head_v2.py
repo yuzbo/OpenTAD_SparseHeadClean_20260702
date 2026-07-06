@@ -31,6 +31,7 @@ class IrregularActionFormerHeadV2(nn.Module):
         soft_scale_cost_weight=0.5,
         reg_denom_floor=0.5,
         use_regress_range=False,
+        allow_center_fallback_inside_gt=False,
         debug_cfg=None,
     ):
         super().__init__()
@@ -50,6 +51,9 @@ class IrregularActionFormerHeadV2(nn.Module):
         self.soft_scale_cost_weight = soft_scale_cost_weight
         self.reg_denom_floor = reg_denom_floor
         self.use_regress_range = use_regress_range
+        self.allow_center_fallback_inside_gt = bool(allow_center_fallback_inside_gt)
+        self._last_missing_center_gt_count = 0
+        self._last_center_fallback_gt_count = 0
         self.loss_normalizer_momentum = loss_normalizer_momentum
         self.register_buffer("loss_normalizer", torch.tensor(float(loss_normalizer)))
 
@@ -248,8 +252,12 @@ class IrregularActionFormerHeadV2(nn.Module):
         candidate_mask = center_seg.min(dim=-1).values > 0
 
         missing_gt = ~candidate_mask.any(dim=0)
-        if missing_gt.any():
+        missing_count = int(missing_gt.sum().item())
+        self._last_missing_center_gt_count = missing_count
+        self._last_center_fallback_gt_count = 0
+        if missing_gt.any() and self.allow_center_fallback_inside_gt:
             candidate_mask[:, missing_gt] = inside_gt_seg[:, missing_gt]
+            self._last_center_fallback_gt_count = missing_count
         if self.use_regress_range:
             max_regress_distance = reg_targets.max(dim=-1).values
             inside_regress_range = torch.logical_and(
@@ -347,6 +355,12 @@ class IrregularActionFormerHeadV2(nn.Module):
                 positive_mask = cls_targets.max(dim=-1).values > 0
                 multi_gt_mask = (assign_weights > 0).sum(dim=1) > 1
                 debug_state.setdefault("head_v2_num_gt_per_sample", []).append(int(num_gts))
+                debug_state.setdefault("head_v2_missing_center_gt_per_sample", []).append(
+                    int(getattr(self, "_last_missing_center_gt_count", 0))
+                )
+                debug_state.setdefault("head_v2_center_fallback_gt_per_sample", []).append(
+                    int(getattr(self, "_last_center_fallback_gt_count", 0))
+                )
                 debug_state.setdefault("head_v2_candidate_points_per_sample", []).append(int(candidate_mask.any(dim=1).sum().item()))
                 debug_state.setdefault("head_v2_positive_points_per_sample", []).append(int(positive_mask.sum().item()))
                 debug_state.setdefault("head_v2_multi_gt_points_per_sample", []).append(int(multi_gt_mask.sum().item()))

@@ -7,6 +7,7 @@ LOG_DIR="$ROOT/logs/gpu1_bridge_openrange_long"
 RUN_TAG="${RUN_TAG:-gpu1_bridge_openrange_long_$(date +%Y%m%d_%H%M%S)}"
 CHAIN_LOG="$LOG_DIR/${RUN_TAG}.log"
 TRAIN_LOG="$LOG_DIR/${RUN_TAG}_train.log"
+FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 CFG="configs/adatad/thumos/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py"
 EXP_ID="${EXP_ID:-2}"
 PORT="${PORT:-32324}"
@@ -36,6 +37,10 @@ cd "$ROOT"
 
 log_msg "SLURM_JOB_ID=${SLURM_JOB_ID:-unset} SLURM_STEP_ID=${SLURM_STEP_ID:-unset} CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi --query-gpu=index,name,memory.used,memory.total,utilization.gpu --format=csv,noheader || nvidia-smi || true
+
+log_msg "fail-closed config scan"
+python tools/check_fail_closed_config.py "$CFG" --json-out "$FAIL_CLOSED_JSON"
+log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 log_msg "config load preflight"
 python - "$CFG" "$EXP_ID" <<'PY'

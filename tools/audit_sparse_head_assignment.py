@@ -141,14 +141,14 @@ def axis_segments_to_native(segments, meta, source_axis):
             raise ValueError("selected-axis segment conversion requires irregular_selected_positions and valid_len")
         selected_meta = dict(meta or {})
         selected_meta["irregular_native_axis"] = False
-        return selected_axis_to_dense_axis(segments, selected_meta)
+        return selected_axis_to_dense_axis(segments, selected_meta, strict=True)
     raise ValueError(f"Unsupported segment axis conversion: {source_axis} -> native")
 
 
 def axis_segments_to_seconds(segments, meta, source_axis):
     if source_axis == "selected" and not has_selected_axis_metadata(meta):
         raise ValueError("selected-axis seconds conversion requires irregular_selected_positions and valid_len")
-    return convert_to_seconds(segments.clone(), meta or {}, source_axis=source_axis)
+    return convert_to_seconds(segments.clone(), meta or {}, source_axis=source_axis, strict=True)
 
 
 def has_selected_axis_metadata(meta):
