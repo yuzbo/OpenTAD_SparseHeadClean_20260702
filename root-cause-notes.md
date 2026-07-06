@@ -453,3 +453,4 @@ Reference snapshot:
   - The hook calls `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` with `REQUIRE_RESULTS=1`, so missing `result_detection.json` is a hard failure instead of a silent skip.
   - The hook unsets `CUDA_VISIBLE_DEVICES` before Stage-4, preserving the CPU-only quality-analysis boundary.
 - This closes an operational gap: once the Stage-2 GPU1 waiter eventually launches the two-epoch dense sanity smoke, high-IoU detection-quality diagnostics should be produced automatically without waiting for a manual follow-up command.
+- Remote preflight on synced commit `6ab8290` passed with `RUN_TRAIN=0 PRECHECK_ONLY=1 RUN_PYTEST=1`: fail-closed scan ok, both dense selected-axis configs load with the expected sampling contracts, `py_compile` ok, and the Stage-2 runner pytest gate passed (`2 passed, 8 deselected`). No training was launched by this preflight.
