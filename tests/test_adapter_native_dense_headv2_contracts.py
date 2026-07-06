@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib.util
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -772,6 +773,16 @@ def test_random_fixed_path_records_dropped_selected_axis_gt_after_remap():
     assert branch.index("_remap_gt_to_selected_axis(") < branch.index("_set_irregular_axis_meta(")
 
 
+def test_selected_axis_helper_paths_clear_dropped_gt_state_for_native_axis():
+    load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
+
+    for func_name in ("_oracle_subsample_window", "_weighted_random_subsample_window"):
+        start = load_frames_impl.index(f"def {func_name}(")
+        end = load_frames_impl.index("        frame_num = int(target_frame_num)", start)
+        helper = load_frames_impl[start:end]
+        assert "else:\n            self._last_dropped_selected_axis_gt_segments = []" in helper
+
+
 def test_irregular_actionformer_validates_axis_contract_and_exposes_proposal_dump_helper():
     detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
 
@@ -861,6 +872,56 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
             segment_axis=[0.0, 4.0],
             segment_seconds=[0.0, 4.0],
         )
+    ]
+
+
+def test_irregular_actionformer_selected_axis_post_processing_nms_uses_native_axis_on_linux(monkeypatch):
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.irregular_actionformer")
+
+    captured = {}
+
+    def fake_batched_nms(segments, scores, labels, **kwargs):
+        captured["segments"] = segments.clone()
+        captured["scores"] = scores.clone()
+        captured["labels"] = labels.clone()
+        return segments, scores, labels
+
+    monkeypatch.setattr(detector, "batched_nms", fake_batched_nms)
+    model = object.__new__(detector.IrregularActionFormer)
+    meta = dict(
+        video_name="video_selected_axis",
+        fps=1.0,
+        snippet_stride=1.0,
+        offset_frames=0.0,
+        window_start_frame=0.0,
+        duration=30.0,
+        irregular_selected_positions=[0.0, 10.0, 20.0],
+        irregular_selected_valid_len=30.0,
+        irregular_native_axis=False,
+        irregular_gt_axis="selected",
+        irregular_proposal_axis="selected",
+        irregular_postprocess_axis="native",
+    )
+
+    results = model.post_processing(
+        predictions=(
+            [torch.tensor([[0.5, 1.5]], dtype=torch.float32)],
+            [torch.tensor([[0.9]], dtype=torch.float32)],
+        ),
+        metas=[meta],
+        post_cfg=SimpleNamespace(
+            pre_nms_thresh=0.001,
+            pre_nms_topk=2000,
+            sliding_window=False,
+            nms={},
+        ),
+        ext_cls=["action"],
+    )
+
+    assert torch.allclose(captured["segments"], torch.tensor([[5.0, 15.0]]))
+    assert results["video_selected_axis"] == [
+        dict(segment=[5.0, 15.0], label="action", score=0.9)
     ]
 
 

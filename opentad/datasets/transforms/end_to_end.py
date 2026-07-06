@@ -704,6 +704,7 @@ class LoadFrames:
                 valid_len=valid_len,
             )
         else:
+            self._last_dropped_selected_axis_gt_segments = []
             out_segments, out_labels = gt_segments, gt_labels
 
         frame_num = int(target_frame_num)
@@ -746,6 +747,7 @@ class LoadFrames:
                 valid_len=valid_len,
             )
         else:
+            self._last_dropped_selected_axis_gt_segments = []
             out_segments, out_labels = gt_segments, gt_labels
 
         frame_num = int(target_frame_num)
