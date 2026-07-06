@@ -399,3 +399,17 @@ Reference snapshot:
 - Claim boundary:
   - Allowed: fail-closed protection has been strengthened and review risks are now narrower.
   - Forbidden: claiming HeadV3/bridge openrange is official-compatible, claiming sparse selection naturally explains `40/42`, or writing paper-level mAP conclusions before Stage 0-4 evidence.
+
+## Stage-2 Resource Boundary Update - 2026-07-06
+
+- Commit `81c93cec133da0bb044e882de709ccfd98941599` adds a hard resource split: GPU1 on the existing Slurm allocation is reserved for short validation/audits only, while long training must be submitted through a fresh `sbatch` job that defaults to `--exclude=g0030`.
+- Added `remote_runs/run_gpu1_stage2_dense_selected_axis_short_20260706.sh` and `remote_runs/launch_gpu1_stage2_dense_selected_axis_short_20260706.sh` for the two-epoch Stage-2 dense selected-axis smoke over:
+  - `input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py`
+  - `input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py`
+- Added `remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh` and `remote_runs/submit_stage2_dense_selected_axis_long_slurm_20260706.sh` as the only current Stage-2 long-train entry. The Slurm body refuses allocation `1118197` and refuses `g0030` unless explicitly overridden.
+- Disabled the old GPU1 long-train launchers and waiter scripts by replacing them with `DEPRECATED_GPU1_LONG_TRAINING_DISABLED` stubs. This prevents accidental reuse of `1118197/g0030/GPU1` for bridge/dense long runs.
+- Verification:
+  - Local: `python -m pytest tests/test_adapter_native_dense_headv2_contracts.py tests/test_audit_sparse_head_assignment_contracts.py tests/test_fail_closed_static_gates.py -q` passed with `67 passed, 21 skipped`; `bash -n remote_runs/*.sh` passed.
+  - Remote synced marker: `.codex_synced_commit=81c93cec133da0bb044e882de709ccfd98941599`.
+  - Remote: `bash -n remote_runs/*.sh`, `pytest tests/test_fail_closed_static_gates.py -q`, and Stage-2 short preflight all passed.
+- Deployment status: Stage-2 short training has not been launched yet because `g0030/GPU1` is currently occupied by another C3/paction step (`1118197.669`, `CUDA_VISIBLE_DEVICES=1`). Do not launch the Stage-2 short smoke until GPU1 is free.
