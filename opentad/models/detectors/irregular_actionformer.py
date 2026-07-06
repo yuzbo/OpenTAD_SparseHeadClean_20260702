@@ -383,7 +383,7 @@ class IrregularActionFormer(BaseDetector):
 
             if num_classes == 1:
                 scores = scores.squeeze(-1)
-                labels = torch.zeros(scores.shape[0]).contiguous()
+                labels = torch.zeros(scores.shape[0], dtype=torch.long).contiguous()
             else:
                 pred_prob = scores.flatten()
                 keep_idxs1 = pred_prob > pre_nms_thresh
