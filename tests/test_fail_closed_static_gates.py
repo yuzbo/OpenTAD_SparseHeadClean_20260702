@@ -91,6 +91,10 @@ def test_stage23_limited_runner_scripts_are_explicit_and_preflight_only():
 
     assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py" in stage3_text
     assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py" in stage3_text
+    assert '"neck": "IrregularFPNDenseAdapter"' in stage3_text
+    assert '"neck": "GridAwareFPNIdentity"' in stage3_text
+    assert '"dense_compat_mode": "official_actionformer"' in stage3_text
+    assert '"compatibility": "irregular_geometry_diagnostic_candidate"' in stage3_text
     assert "RUN_ASSIGNMENT_AUDIT" in stage3_text
     assert "tools/audit_sparse_head_assignment.py" in stage3_text
     assert "--configs \"$SELECTED_BRIDGE_CFG\"" in stage3_text

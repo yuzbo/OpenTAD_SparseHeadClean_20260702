@@ -66,12 +66,18 @@ expected = {
         "remap_gt_to_selected_axis": True,
         "work_dir_contains": "selected_axis_control",
         "postprocess_axis": "native",
+        "neck": "IrregularFPNDenseAdapter",
+        "compatibility": "dense_compatible_diagnostic_candidate",
+        "dense_compat_mode": "official_actionformer",
     },
     "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py": {
         "label": "native_axis_bridge_shortgate_control",
         "remap_gt_to_selected_axis": False,
         "work_dir_contains": "shortgate",
         "postprocess_axis": "native",
+        "neck": "GridAwareFPNIdentity",
+        "compatibility": "irregular_geometry_diagnostic_candidate",
+        "dense_compat_mode": None,
     },
 }
 
@@ -83,7 +89,7 @@ for path in sys.argv[1:]:
     prior = head.prior_generator
 
     assert cfg.model.projection.type == "GridAwareConv1DTransformerProj", (name, cfg.model.projection.type)
-    assert cfg.model.neck.type == "GridAwareFPNIdentity", (name, cfg.model.neck.type)
+    assert cfg.model.neck.type == rule["neck"], (name, cfg.model.neck.type)
     assert head.type == "IrregularActionFormerBridgeHead", (name, head.type)
     assert head.assignment_mode == "hard", (name, head.assignment_mode)
     assert head.regression_mode == "symmetric_linear", (name, head.regression_mode)
@@ -92,10 +98,12 @@ for path in sys.argv[1:]:
     assert prior.range_mode == "absolute", (name, prior.range_mode)
     assert prior.decode_scale_mode == "level_stride", (name, prior.decode_scale_mode)
     assert prior.radius_scale_mode == "level_stride", (name, prior.radius_scale_mode)
+    assert getattr(prior, "dense_compat_mode", None) == rule["dense_compat_mode"], (name, getattr(prior, "dense_compat_mode", None))
     assert rule["work_dir_contains"] in cfg.work_dir, (name, cfg.work_dir)
     assert bool(cfg.post_processing.save_dict), name
 
     route_contract = getattr(head, "route_contract", {})
+    assert route_contract.get("compatibility") == rule["compatibility"], (name, route_contract)
     expected_axis = route_contract.get("expected_axis_contract", {})
     assert expected_axis.get("postprocess_axis", "native") == rule["postprocess_axis"], (name, expected_axis)
 
