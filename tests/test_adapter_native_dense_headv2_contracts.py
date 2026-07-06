@@ -1105,6 +1105,36 @@ def test_irregular_actionformer_converts_selected_axis_before_nms():
     assert detector_impl.index("segments = self._segments_to_axis(") < detector_impl.index("batched_nms(")
 
 
+def test_selected_axis_fractional_roundtrip_matches_native_seconds_on_linux():
+    torch = import_torch_or_skip()
+    post_utils = load_module("opentad/models/utils/post_processing/utils.py", "post_processing_utils_roundtrip")
+
+    meta = dict(
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=6.0,
+        window_start_frame=12.0,
+        duration=120.0,
+        irregular_selected_positions=[3.0, 8.0, 18.0, 33.0],
+        irregular_selected_valid_len=48.0,
+        irregular_native_axis=False,
+    )
+    selected_segments = torch.tensor([[0.25, 1.5], [2.25, 3.75]], dtype=torch.float32)
+    expected_native = torch.tensor([[4.25, 13.0], [21.75, 44.25]], dtype=torch.float32)
+    expected_seconds = torch.tensor([[17.5, 35.0], [52.5, 97.5]], dtype=torch.float32)
+
+    native_segments = post_utils.selected_axis_to_dense_axis(selected_segments, meta)
+    selected_to_seconds = post_utils.convert_to_seconds(selected_segments.clone(), meta)
+    native_meta = dict(meta, irregular_native_axis=True)
+    native_to_seconds = post_utils.convert_to_seconds(native_segments.clone(), native_meta)
+
+    assert torch.allclose(native_segments, expected_native)
+    assert not torch.allclose(selected_segments, native_segments)
+    assert torch.allclose(selected_to_seconds, expected_seconds)
+    assert torch.allclose(native_to_seconds, expected_seconds)
+    assert torch.allclose(selected_to_seconds, native_to_seconds)
+
+
 def test_irregular_actionformer_selected_axis_grid_uses_selected_indices_not_native_positions():
     detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
 
@@ -1192,22 +1222,24 @@ def test_irregular_actionformer_selected_axis_post_processing_nms_uses_native_ax
     model = object.__new__(detector.IrregularActionFormer)
     meta = dict(
         video_name="video_selected_axis",
-        fps=1.0,
-        snippet_stride=1.0,
-        offset_frames=0.0,
-        window_start_frame=0.0,
-        duration=30.0,
-        irregular_selected_positions=[0.0, 10.0, 20.0],
-        irregular_selected_valid_len=30.0,
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=6.0,
+        window_start_frame=12.0,
+        duration=120.0,
+        irregular_selected_positions=[3.0, 8.0, 18.0, 33.0],
+        irregular_selected_valid_len=48.0,
         irregular_native_axis=False,
         irregular_gt_axis="selected",
         irregular_proposal_axis="selected",
         irregular_postprocess_axis="native",
     )
+    expected_native = torch.tensor([[4.25, 21.75]], dtype=torch.float32)
+    expected_seconds = torch.tensor([[17.5, 52.5]], dtype=torch.float32)
 
     results = model.post_processing(
         predictions=(
-            [torch.tensor([[0.5, 1.5]], dtype=torch.float32)],
+            [torch.tensor([[0.25, 2.25]], dtype=torch.float32)],
             [torch.tensor([[0.9]], dtype=torch.float32)],
         ),
         metas=[meta],
@@ -1220,9 +1252,10 @@ def test_irregular_actionformer_selected_axis_post_processing_nms_uses_native_ax
         ext_cls=["action"],
     )
 
-    assert torch.allclose(captured["segments"], torch.tensor([[5.0, 15.0]]))
+    assert torch.allclose(captured["segments"], expected_native)
+    assert torch.allclose(torch.tensor(results["video_selected_axis"][0]["segment"]), expected_seconds[0])
     assert results["video_selected_axis"] == [
-        dict(segment=[5.0, 15.0], label="action", score=0.9)
+        dict(segment=[17.5, 52.5], label="action", score=0.9)
     ]
 
 
