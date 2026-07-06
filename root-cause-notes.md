@@ -17,6 +17,8 @@ Official-OpenTAD review boundary absorbed on 2026-07-06: the authority for dense
 
 Monitoring-collapse review boundary absorbed on 2026-07-06: the external response in `pro-review-monitoring-collapse-20260706.md` is stricter than the earlier review and explicitly rejects explaining `65 -> 40/42` as natural random 50% sparse degradation. It was based on GitHub source/raw review of commit `d7da39315f80405253bf705997d7c26e63c66ab0` plus upstream OpenTAD static review, not a local clone or training run, so every code claim must be rechecked against current HEAD. Its active checklist is: split supervision/decode/postprocess axes, verify whether NMS is performed on comparable native/seconds coordinates before suppression, revisit full-gap versus half-cell temporal-grid semantics, stop treating positive coverage alone as proof of high-IoU correctness, and gate `absrange_expanded` with stronger audit/short-run evidence before interpreting long-run results.
 
+Strict FAIL review boundary absorbed on 2026-07-06: the external response in `pro-review-strict-fail-20260706.md` reviews GitHub commit `8689eff` and explicitly blocks long training and any `dense-equivalent` claim. It agrees that the five-stage diagnostic route is the correct order, but says the current evidence still cannot prove bridge / irregular-head equivalence to official dense ActionFormer/AdaTAD. Treat this as the active gate before further deployment: first strengthen the bridge equivalence verifier to cover real `IrregularPointGeneratorV2` output, add numeric selected/native/seconds roundtrip tests, add val/test fail-closed guards for diagnostic GT/cache paths, and verify official dense selected-axis performance before attributing the `65 -> 40/42` collapse to sparse-head design.
+
 Reference snapshot:
 
 | Experiment | Status | Avg mAP | Notes |
@@ -109,6 +111,21 @@ Reference snapshot:
     - record NMS-before/after high-IoU recall;
     - keep per-level positives and GT coverage as necessary but insufficient signals.
   - Experiment-order constraint: run official dense selected-axis sanity and bridge dense-equivalence sanity before making strong native-axis irregular-head claims. `absrange_expanded` is a short-run, gated candidate, not a proof of route correctness by itself.
+
+- 2026-07-06 strict FAIL review absorbed:
+  - Full response recorded at `pro-review-strict-fail-20260706.md` with source attachment SHA256 `7eaadb1bbe30546ba6034a4d22eafa1426835cd8cfddf865852cfe5294e1b719`.
+  - Current verdict for commit `8689eff`: `FAIL` for release/long-train claims, not for the five-stage diagnostic direction.
+  - Active blocking items:
+    - `tools/verify_bridge_dense_equivalence.py` is too narrow because it uses hand-built stride-like points and does not cover real `IrregularPointGeneratorV2` generated grids.
+    - Any bridge route that silently falls back to `center_radius_scale="full_cell_span"` or `reg_denom_mode="full_cell_span"` is not official dense stride semantics and must be either made explicit as a legacy ablation or fail-closed.
+    - `selected_axis_to_dense_axis` / `convert_to_seconds` needs a numeric no-double-conversion regression test, not just metadata/string checks.
+    - BATA / diagnostic GT cache paths need validation/test fail-closed guards even if current configs do not enable them.
+    - The Stage 2 "official dense selected-axis sanity" config is a current-repo sanity route, not proof of official OpenTAD parity until upstream source diff/hash and near-65 reproduction are established.
+  - Updated experiment gate:
+    - Run Linux config load, `py_compile`, pytest, and `python tools/verify_bridge_dense_equivalence.py --json` before any further training.
+    - Run same-batch audits before long training, including assigned-positive target decode IoU and length-bucket GT coverage.
+    - Train official dense selected-axis sanity first; if it cannot approach the claimed `~65` equal-interval baseline, do not blame sparse heads.
+    - Only after the selected-axis dense/bridge controls pass should native `absrange_expanded` shortgate or long-run evidence be interpreted.
 
 - 2026-07-05 implementation update:
   - Added `center_radius_scale` and `reg_denom_mode` knobs to `IrregularActionFormerBridgeHead`.
