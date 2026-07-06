@@ -134,6 +134,10 @@ def test_stage2_resource_boundary_short_gpu1_but_long_slurm_only():
     assert "workflow.end_epoch=2" in short_runner
     assert "workflow.val_start_epoch=1" in short_runner
     assert "work_dir=$short_work_dir" in short_runner
+    assert "RUN_STAGE4_AFTER" in short_runner
+    assert "run_stage4_detection_quality_stage2_dense_20260706.sh" in short_runner
+    assert "unset CUDA_VISIBLE_DEVICES" in short_runner
+    assert "REQUIRE_RESULTS=1" in short_runner
     assert "srun --jobid=1118197 --overlap -w g0030" in short_launcher
     assert "export CUDA_VISIBLE_DEVICES=1" in short_launcher
 

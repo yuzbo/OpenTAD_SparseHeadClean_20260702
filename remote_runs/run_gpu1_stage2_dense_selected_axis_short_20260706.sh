@@ -9,6 +9,7 @@ RUN_TAG="${RUN_TAG:-gpu1_stage2_dense_selected_axis_short_$(date +%Y%m%d_%H%M%S)
 FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 PRECHECK_ONLY="${PRECHECK_ONLY:-1}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
+RUN_STAGE4_AFTER="${RUN_STAGE4_AFTER:-1}"
 EXP_ID="${EXP_ID:-1}"
 PORT_BASE="${PORT_BASE:-32340}"
 
@@ -53,7 +54,7 @@ select_python
 
 log_msg "root=$ROOT"
 log_msg "python_bin=$PYTHON_BIN"
-log_msg "RUN_TRAIN=$RUN_TRAIN PRECHECK_ONLY=$PRECHECK_ONLY EXP_ID=$EXP_ID PORT_BASE=$PORT_BASE"
+log_msg "RUN_TRAIN=$RUN_TRAIN PRECHECK_ONLY=$PRECHECK_ONLY RUN_STAGE4_AFTER=$RUN_STAGE4_AFTER EXP_ID=$EXP_ID PORT_BASE=$PORT_BASE"
 log_msg "fail-closed config scan"
 "$PYTHON_BIN" tools/check_fail_closed_config.py "${CONFIGS[@]}" --json-out "$FAIL_CLOSED_JSON"
 log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
@@ -160,4 +161,14 @@ done
 
 if [[ "$PRECHECK_ONLY" == "1" ]]; then
   log_msg "precheck_only: not executing training commands; set PRECHECK_ONLY=0 with RUN_TRAIN=1 to execute"
+elif [[ "$RUN_STAGE4_AFTER" == "1" ]]; then
+  log_msg "START post-short Stage-4 detection quality"
+  (
+    unset CUDA_VISIBLE_DEVICES
+    RUN_TAG="${RUN_TAG}_stage4_quality" \
+    REQUIRE_RESULTS=1 \
+    PYTHON_BIN="$PYTHON_BIN" \
+    bash "$ROOT/remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh"
+  )
+  log_msg "END post-short Stage-4 detection quality"
 fi

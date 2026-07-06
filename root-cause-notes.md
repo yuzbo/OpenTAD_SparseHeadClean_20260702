@@ -444,3 +444,12 @@ Reference snapshot:
   - Full/long training remains blocked until Stage-2 dense selected-axis short smoke runs and the Stage-4 quality runner has a real `result_detection.json` to analyze.
 - Resource status:
   - The Stage-2 GPU1 waiter is still safe: it sees `g0030/GPU1` busy (`step 1118197.669`, about `3959 MiB`) and continues sleeping without launching training.
+
+## Stage-2 Short to Stage-4 Quality Auto-Hook - 2026-07-06
+
+- Added a post-short hook to `remote_runs/run_gpu1_stage2_dense_selected_axis_short_20260706.sh`:
+  - Default `RUN_STAGE4_AFTER=1`.
+  - The hook runs only after real short validation (`RUN_TRAIN=1`, `PRECHECK_ONLY=0`) and after both dense selected-axis short runs exit successfully.
+  - The hook calls `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` with `REQUIRE_RESULTS=1`, so missing `result_detection.json` is a hard failure instead of a silent skip.
+  - The hook unsets `CUDA_VISIBLE_DEVICES` before Stage-4, preserving the CPU-only quality-analysis boundary.
+- This closes an operational gap: once the Stage-2 GPU1 waiter eventually launches the two-epoch dense sanity smoke, high-IoU detection-quality diagnostics should be produced automatically without waiting for a manual follow-up command.
