@@ -1002,6 +1002,54 @@ def test_bridge_head_default_and_legacy_scale_contract_on_linux():
     assert legacy_head._build_candidate_mask(point, gt_segs, reg_targets).sum().item() == 2
 
 
+def test_bridge_head_extended_points_expose_official_scale_not_legacy_span_on_linux():
+    torch = import_torch_or_skip()
+    mmengine_config = pytest.importorskip("mmengine.config")
+    bridge_head = pytest.importorskip("opentad.models.dense_heads.irregular_actionformer_bridge_head")
+    config_dict = mmengine_config.ConfigDict
+
+    head = bridge_head.IrregularActionFormerBridgeHead(
+        num_classes=20,
+        in_channels=512,
+        feat_channels=512,
+        num_convs=1,
+        prior_generator=config_dict(
+            type="IrregularPointGeneratorV2",
+            strides=[1],
+            regression_range=[(0, 4)],
+            range_mode="absolute",
+        ),
+        loss=config_dict(cls_loss=dict(type="FocalLoss"), reg_loss=dict(type="DIOULoss")),
+    )
+    point = torch.tensor([[5.0, 0.0, 100.0, 2.0, 6.0]], dtype=torch.float32)
+
+    _, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = head._point_fields_extended(point)
+
+    assert torch.allclose(left_scale, torch.tensor([2.0]))
+    assert torch.allclose(right_scale, torch.tensor([6.0]))
+    assert torch.allclose(point_scale, torch.tensor([4.0]))
+    assert torch.allclose(range_scale, torch.tensor([4.0]))
+    assert torch.allclose(radius_scale, torch.tensor([4.0]))
+    assert torch.allclose(
+        head._scale_base(left_scale, right_scale, point_scale, "full_cell_span"),
+        torch.tensor([8.0]),
+    )
+    assert torch.allclose(
+        head._scale_base(left_scale, right_scale, point_scale, "left_right_mean"),
+        torch.tensor([4.0]),
+    )
+
+
+def test_bridge_head_and_audit_spell_hard_assignment_no_candidate_mask_fallback():
+    bridge_impl = read("opentad/models/dense_heads/irregular_actionformer_bridge_head.py")
+    audit_impl = read("tools/audit_sparse_head_assignment.py")
+
+    assert "bridge_hard_assignment_uses_build_candidate_mask" in bridge_impl
+    assert "bridge_hard_missing_center_fallback_applied" in bridge_impl
+    assert "hard_assignment_uses_build_candidate_mask" in audit_impl
+    assert "hard_assignment_missing_center_fallback_applied" in audit_impl
+
+
 def test_bridge_hard_uniform_grid_matches_official_dense_target_contract_on_linux():
     torch = import_torch_or_skip()
     mmengine_config = pytest.importorskip("mmengine.config")
@@ -1326,6 +1374,67 @@ def test_fail_closed_config_scanner_rejects_eval_shortcuts(tmp_path):
     assert "cfg.model.prediction_cache_shortcut" in paths
 
 
+def test_fail_closed_config_scanner_rejects_dense_claim_with_legacy_bridge_flags():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_legacy_claim")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=True,
+                    allow_center_fallback_inside_gt=True,
+                    route_contract=dict(
+                        compatibility="legacy_ablation_only",
+                        dense_equivalent_claim_allowed=True,
+                        allow_legacy_full_cell_span=True,
+                        allow_center_fallback_inside_gt=True,
+                    ),
+                )
+            )
+        )
+    )
+
+    assert any("dense-equivalent claim" in item["reason"] for item in violations)
+
+
+def test_fail_closed_config_scanner_rejects_route_contract_contradictions():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_contract_contradiction")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=True,
+                    allow_center_fallback_inside_gt=True,
+                    route_contract=dict(
+                        compatibility="dense_compatible_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                    ),
+                )
+            )
+        )
+    )
+    paths = {item["path"] for item in violations}
+
+    assert "cfg.model.rpn_head.route_contract.allow_legacy_full_cell_span" in paths
+    assert "cfg.model.rpn_head.route_contract.allow_center_fallback_inside_gt" in paths
+    assert "cfg.model.rpn_head.route_contract.compatibility" in paths
+
+
+def test_fail_closed_config_scanner_expands_shell_literal_globs(tmp_path):
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_globs")
+    (tmp_path / "b.py").write_text("model = dict()", encoding="utf-8")
+    (tmp_path / "a.py").write_text("model = dict()", encoding="utf-8")
+
+    expanded = scanner.expand_config_paths([str(tmp_path / "*.py")])
+
+    assert [path.name for path in expanded] == ["a.py", "b.py"]
+
+
 def test_loadframes_selected_axis_remap_does_not_create_tiny_collapsed_gt_targets():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
@@ -1436,6 +1545,26 @@ def test_selected_axis_fractional_roundtrip_matches_native_seconds_on_linux():
     assert torch.allclose(selected_to_seconds, native_to_seconds)
 
 
+def test_convert_to_seconds_selected_axis_requires_selected_metadata_on_linux():
+    torch = import_torch_or_skip()
+    post_utils = load_module(
+        "opentad/models/utils/post_processing/utils.py",
+        "post_processing_utils_selected_fail_closed",
+    )
+
+    segments = torch.tensor([[0.0, 1.0]], dtype=torch.float32)
+    meta = dict(
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=0.0,
+        duration=120.0,
+        irregular_native_axis=False,
+    )
+
+    with pytest.raises(ValueError, match="source_axis='selected'"):
+        post_utils.convert_to_seconds(segments.clone(), meta, source_axis="selected")
+
+
 def test_irregular_actionformer_selected_axis_grid_uses_selected_indices_not_native_positions():
     detector_impl = read("opentad/models/detectors/irregular_actionformer.py")
 
@@ -1466,6 +1595,8 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
         irregular_gt_axis="selected",
         irregular_proposal_axis="selected",
         irregular_postprocess_axis="native",
+        irregular_selected_positions=[0.0, 2.0, 4.0],
+        irregular_selected_valid_len=6.0,
     )
 
     assert model._axis_contract_from_meta(good_meta) == ("native", "native", "native")
@@ -1741,7 +1872,7 @@ def test_irregular_point_generator_v2_level_stride_separates_range_decode_radius
     )
     feat = torch.zeros(1, 1, 3)
     grid = {
-        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "center": torch.tensor([[0.0, 4.0, 8.0]]),
         "cell_left": torch.tensor([[2.0, 4.0, 8.0]]),
         "cell_right": torch.tensor([[3.0, 5.0, 9.0]]),
     }
@@ -1796,7 +1927,7 @@ def test_irregular_point_generator_v2_official_dense_compat_mode_locks_scales_on
     )
     feat = torch.zeros(1, 1, 3)
     grid = {
-        "center": torch.tensor([[0.0, 2.0, 4.0]]),
+        "center": torch.tensor([[0.0, 4.0, 8.0]]),
         "cell_left": torch.tensor([[2.0, 4.0, 8.0]]),
         "cell_right": torch.tensor([[3.0, 5.0, 9.0]]),
     }
@@ -1819,6 +1950,34 @@ def test_irregular_point_generator_v2_official_dense_compat_mode_locks_scales_on
             regression_range=[(8, 16)],
             dense_compat_mode="unknown",
         )
+
+
+def test_irregular_point_generator_v2_official_dense_compat_mode_rejects_non_dense_centers_on_linux():
+    torch = import_torch_or_skip()
+    point_generator = pytest.importorskip("opentad.models.dense_heads.prior_generator.irregular_point_generator")
+
+    generator = point_generator.IrregularPointGeneratorV2(
+        strides=[4],
+        regression_range=[(8, 16)],
+        dense_compat_mode="official_actionformer",
+    )
+    feat = torch.zeros(1, 1, 3)
+    irregular_grid = {
+        "center": torch.tensor([[0.0, 5.0, 8.0]]),
+        "cell_left": torch.tensor([[4.0, 5.0, 3.0]]),
+        "cell_right": torch.tensor([[5.0, 3.0, 4.0]]),
+    }
+    dense_like_grid = {
+        "center": torch.tensor([[0.0, 4.0, 8.0]]),
+        "cell_left": torch.tensor([[4.0, 4.0, 4.0]]),
+        "cell_right": torch.tensor([[4.0, 4.0, 4.0]]),
+    }
+
+    with pytest.raises(ValueError, match="official_actionformer"):
+        generator([feat], [irregular_grid])
+
+    points = generator([feat], [dense_like_grid])[0]
+    assert torch.allclose(points[..., 0], dense_like_grid["center"])
 
 
 def test_temporal_grid_explicit_cells_are_preserved_on_linux():

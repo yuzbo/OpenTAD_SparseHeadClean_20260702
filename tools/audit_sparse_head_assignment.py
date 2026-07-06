@@ -137,6 +137,8 @@ def axis_segments_to_native(segments, meta, source_axis):
     if source_axis == "native":
         return segments
     if source_axis == "selected":
+        if not has_selected_axis_metadata(meta):
+            raise ValueError("selected-axis segment conversion requires irregular_selected_positions and valid_len")
         selected_meta = dict(meta or {})
         selected_meta["irregular_native_axis"] = False
         return selected_axis_to_dense_axis(segments, selected_meta)
@@ -144,7 +146,16 @@ def axis_segments_to_native(segments, meta, source_axis):
 
 
 def axis_segments_to_seconds(segments, meta, source_axis):
+    if source_axis == "selected" and not has_selected_axis_metadata(meta):
+        raise ValueError("selected-axis seconds conversion requires irregular_selected_positions and valid_len")
     return convert_to_seconds(segments.clone(), meta or {}, source_axis=source_axis)
+
+
+def has_selected_axis_metadata(meta):
+    meta = meta or {}
+    return meta.get("irregular_selected_positions", None) is not None and meta.get(
+        "irregular_selected_valid_len", None
+    ) is not None
 
 
 def scalar_list(values):
@@ -441,6 +452,9 @@ def build_hard_diagnostics(head, point, gt_segment, offsets):
     empty_counts = [0 for _ in offsets]
     result = {
         "assigned_gt": torch.full((num_pts,), -1, device=point.device, dtype=torch.long),
+        "hard_assignment_uses_build_candidate_mask": False,
+        "hard_assignment_missing_center_fallback_applied": False,
+        "hard_assignment_candidate_mask_contract": "inline_center_radius_no_missing_center_fallback",
         "inside_gt_count_by_level": empty_counts[:],
         "center_pass_count_by_level": empty_counts[:],
         "per_level_candidate_count_before_range": empty_counts[:],
@@ -812,6 +826,11 @@ def audit_config(config_path, batches, split, device):
                 "regression_mode": getattr(head, "regression_mode", "unknown"),
                 "center_radius_scale": getattr(head, "center_radius_scale", "legacy"),
                 "reg_denom_mode": getattr(head, "reg_denom_mode", "legacy"),
+                "hard_assignment_uses_build_candidate_mask": diag["hard_assignment_uses_build_candidate_mask"],
+                "hard_assignment_missing_center_fallback_applied": diag[
+                    "hard_assignment_missing_center_fallback_applied"
+                ],
+                "hard_assignment_candidate_mask_contract": diag["hard_assignment_candidate_mask_contract"],
                 "range_mode": getattr(head.prior_generator, "range_mode", "unknown"),
                 "level_count": level_count,
                 "per_level_pos_count": per_level_pos_count,

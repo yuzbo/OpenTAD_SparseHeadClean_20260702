@@ -1,4 +1,5 @@
 import argparse
+import glob
 import json
 import sys
 from pathlib import Path
@@ -24,6 +25,9 @@ BLOCKED_KEY_PATTERNS = (
     "prediction_folder",
     "fuse_list",
 )
+
+LEGACY_COMPATIBILITY = "legacy_ablation_only"
+CORRECTED_COMPATIBILITY = "dense_compatible_diagnostic_candidate"
 
 
 def _plain_value(value):
@@ -60,6 +64,7 @@ def scan_config_object(obj, path="cfg"):
 
     items = _iter_items(obj)
     if items is not None:
+        violations.extend(scan_route_contract_object(obj, path))
         for key, value in items:
             key_str = str(key)
             child_path = f"{path}.{key_str}"
@@ -84,9 +89,118 @@ def scan_config_object(obj, path="cfg"):
     return violations
 
 
+def _dict_get(obj, key, default=None):
+    obj = _plain_value(obj)
+    if isinstance(obj, dict):
+        return _plain_value(obj.get(key, default))
+    return default
+
+
+def _is_bridge_head_like(obj):
+    obj = _plain_value(obj)
+    if not isinstance(obj, dict):
+        return False
+    head_type = str(obj.get("type", ""))
+    return head_type == "IrregularActionFormerBridgeHead" or "allow_legacy_full_cell_span" in obj
+
+
+def _violation(path, key, value, reason):
+    return {"path": f"{path}.{key}", "key": key, "value": repr(_plain_value(value)), "reason": reason}
+
+
+def scan_route_contract_object(obj, path):
+    obj = _plain_value(obj)
+    if path.endswith(".route_contract"):
+        return []
+    if not isinstance(obj, dict) or not _is_bridge_head_like(obj):
+        return []
+
+    violations = []
+    contract = _dict_get(obj, "route_contract", {})
+    contract = contract if isinstance(contract, dict) else {}
+    uses_legacy_full_cell_span = bool(_dict_get(obj, "allow_legacy_full_cell_span", False))
+    uses_center_fallback = bool(_dict_get(obj, "allow_center_fallback_inside_gt", False))
+    legacy_scale_modes = {"full_cell_span"}
+    uses_legacy_full_cell_span = uses_legacy_full_cell_span or _dict_get(obj, "center_radius_scale") in legacy_scale_modes
+    uses_legacy_full_cell_span = uses_legacy_full_cell_span or _dict_get(obj, "reg_denom_mode") in legacy_scale_modes
+    uses_legacy_route = uses_legacy_full_cell_span or uses_center_fallback
+
+    dense_claim = bool(_dict_get(obj, "dense_equivalent_claim_allowed", False)) or bool(
+        _dict_get(contract, "dense_equivalent_claim_allowed", False)
+    )
+    if uses_legacy_route and dense_claim:
+        violations.append(
+            _violation(
+                path,
+                "route_contract.dense_equivalent_claim_allowed",
+                _dict_get(contract, "dense_equivalent_claim_allowed", _dict_get(obj, "dense_equivalent_claim_allowed")),
+                "dense-equivalent claim is forbidden for legacy full-cell-span or missing-center fallback routes",
+            )
+        )
+
+    if uses_legacy_route and not contract:
+        violations.append(
+            _violation(
+                path,
+                "route_contract",
+                contract,
+                "legacy full-cell-span or missing-center fallback route must declare route_contract metadata",
+            )
+        )
+        return violations
+
+    if not contract:
+        return violations
+
+    contract_legacy_full = bool(_dict_get(contract, "allow_legacy_full_cell_span", False))
+    contract_center_fallback = bool(_dict_get(contract, "allow_center_fallback_inside_gt", False))
+    compatibility = _dict_get(contract, "compatibility")
+
+    if contract_legacy_full != uses_legacy_full_cell_span:
+        violations.append(
+            _violation(
+                f"{path}.route_contract",
+                "allow_legacy_full_cell_span",
+                contract_legacy_full,
+                "route_contract contradicts bridge allow_legacy_full_cell_span/scale modes",
+            )
+        )
+    if contract_center_fallback != uses_center_fallback:
+        violations.append(
+            _violation(
+                f"{path}.route_contract",
+                "allow_center_fallback_inside_gt",
+                contract_center_fallback,
+                "route_contract contradicts bridge allow_center_fallback_inside_gt",
+            )
+        )
+    expected_compatibility = LEGACY_COMPATIBILITY if uses_legacy_route else CORRECTED_COMPATIBILITY
+    if compatibility not in {expected_compatibility, None}:
+        violations.append(
+            _violation(
+                f"{path}.route_contract",
+                "compatibility",
+                compatibility,
+                f"route_contract compatibility must be {expected_compatibility!r} for this bridge route",
+            )
+        )
+    return violations
+
+
 def scan_config_file(config_path):
     cfg = Config.fromfile(str(config_path))
     return scan_config_object(cfg)
+
+
+def expand_config_paths(configs):
+    expanded = []
+    for config in configs:
+        matches = sorted(glob.glob(config))
+        if matches:
+            expanded.extend(Path(match) for match in matches)
+        else:
+            expanded.append(Path(config))
+    return expanded
 
 
 def parse_args():
@@ -99,7 +213,7 @@ def parse_args():
 def main():
     args = parse_args()
     all_violations = []
-    for config_path in args.configs:
+    for config_path in expand_config_paths(args.configs):
         violations = scan_config_file(config_path)
         for violation in violations:
             violation["config"] = str(config_path)

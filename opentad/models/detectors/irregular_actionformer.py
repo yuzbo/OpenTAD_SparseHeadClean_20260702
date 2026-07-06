@@ -61,6 +61,18 @@ class IrregularActionFormer(BaseDetector):
         )
         return gt_axis, proposal_axis, postprocess_axis
 
+    def _has_selected_axis_meta(self, meta):
+        return meta.get("irregular_selected_positions", None) is not None and meta.get(
+            "irregular_selected_valid_len", None
+        ) is not None
+
+    def _require_selected_axis_meta(self, meta, stage):
+        if not self._has_selected_axis_meta(meta):
+            raise ValueError(
+                "IrregularActionFormer selected-axis conversion requires irregular_selected_positions "
+                f"and irregular_selected_valid_len at {stage}."
+            )
+
     def _assert_axis_contract(self, meta, stage="runtime"):
         gt_axis, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
         axes = (gt_axis, proposal_axis, postprocess_axis)
@@ -85,6 +97,17 @@ class IrregularActionFormer(BaseDetector):
                 f"{stage}: irregular_native_axis implies {expected_axis}, "
                 f"got gt_axis={gt_axis}, proposal_axis={proposal_axis}"
             )
+        contract = meta.get("irregular_axis_contract", {}) or {}
+        allow_selected_postprocess = bool(
+            meta.get("allow_selected_axis_postprocess_nms", contract.get("allow_selected_axis_postprocess_nms", False))
+        )
+        if postprocess_axis == "selected" and not allow_selected_postprocess:
+            raise ValueError(
+                "IrregularActionFormer refuses selected-axis post-processing/NMS without "
+                f"allow_selected_axis_postprocess_nms=True at {stage}."
+            )
+        if "selected" in axes:
+            self._require_selected_axis_meta(meta, stage)
 
     def _assert_axis_contracts(self, metas, stage="runtime"):
         if metas is None:
@@ -96,10 +119,13 @@ class IrregularActionFormer(BaseDetector):
         if source_axis == target_axis:
             return segments
         if source_axis == "selected" and target_axis == "native":
+            self._require_selected_axis_meta(meta, "proposal_axis_conversion")
             return selected_axis_to_dense_axis(segments, meta)
         raise ValueError(f"Unsupported proposal axis conversion: {source_axis} -> {target_axis}")
 
     def _segments_to_seconds(self, segments, meta, source_axis):
+        if source_axis == "selected":
+            self._require_selected_axis_meta(meta, "seconds_conversion")
         return convert_to_seconds(segments, meta, source_axis=source_axis)
 
     def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None):

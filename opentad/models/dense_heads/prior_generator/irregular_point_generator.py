@@ -108,11 +108,29 @@ class IrregularPointGeneratorV2(IrregularPointGenerator):
         scale = self._single_scale(center, scale_left, scale_right, stride, mode)
         return scale, scale
 
+    def _assert_official_dense_compat_grid(self, temporal_grid, stride):
+        if self.dense_compat_mode != "official_actionformer":
+            return
+        center = temporal_grid["center"]
+        expected = torch.arange(center.shape[-1], dtype=center.dtype, device=center.device) * float(stride)
+        expected = expected.reshape(1, -1).expand_as(center)
+        valid_mask = temporal_grid.get("valid_mask", None)
+        if valid_mask is None:
+            valid_mask = torch.ones_like(center, dtype=torch.bool)
+        else:
+            valid_mask = valid_mask.to(device=center.device).bool()
+        if valid_mask.any() and not torch.allclose(center[valid_mask], expected[valid_mask], atol=1e-4, rtol=1e-4):
+            raise ValueError(
+                "dense_compat_mode='official_actionformer' requires dense-like temporal grid centers "
+                f"arange(T) * stride (stride={stride}). Use a non-dense diagnostic mode for irregular grids."
+            )
+
     def __call__(self, feat_list, temporal_grid_list):
         pts_list = []
         for feat, temporal_grid, reg_range, stride in zip(
             feat_list, temporal_grid_list, self.regression_range, self.strides
         ):
+            self._assert_official_dense_compat_grid(temporal_grid, stride)
             center = temporal_grid["center"]
             scale_left = temporal_grid["cell_left"].clamp_min(1e-6)
             scale_right = temporal_grid["cell_right"].clamp_min(1e-6)

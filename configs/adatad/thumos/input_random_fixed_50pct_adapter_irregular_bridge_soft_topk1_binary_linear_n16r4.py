@@ -11,6 +11,13 @@ model = dict(
         soft_loss_normalizer_mode="pos_count",
         soft_reg_weight_mode="binary",
         soft_cls_target_mode="binary",
+        route_contract=dict(
+            route_label="SPARSE_HEAD_WARN_REVIEW_FIXES_DIAGNOSTIC_ONLY",
+            compatibility="legacy_ablation_only",
+            dense_equivalent_claim_allowed=False,
+            allow_legacy_full_cell_span=True,
+            allow_center_fallback_inside_gt=True,
+        ),
     )
 )
 

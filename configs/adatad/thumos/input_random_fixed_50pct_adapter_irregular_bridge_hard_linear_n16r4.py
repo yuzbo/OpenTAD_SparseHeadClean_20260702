@@ -15,6 +15,13 @@ model = dict(
         reg_denom_mode="full_cell_span",
         allow_legacy_full_cell_span=True,
         allow_center_fallback_inside_gt=True,
+        route_contract=dict(
+            route_label="SPARSE_HEAD_WARN_REVIEW_FIXES_DIAGNOSTIC_ONLY",
+            compatibility="legacy_ablation_only",
+            dense_equivalent_claim_allowed=False,
+            allow_legacy_full_cell_span=True,
+            allow_center_fallback_inside_gt=True,
+        ),
         cls_prior_prob=0.01,
         loss_normalizer=100,
         loss_normalizer_momentum=0.9,

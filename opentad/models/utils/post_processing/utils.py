@@ -146,10 +146,14 @@ def convert_to_seconds(segments, meta, source_axis="auto"):
     irregular_valid_len = meta.get("irregular_selected_valid_len", None)
     has_selected_axis_meta = irregular_positions is not None and irregular_valid_len is not None
     if source_axis == "selected":
-        if has_selected_axis_meta:
-            selected_meta = dict(meta)
-            selected_meta["irregular_native_axis"] = False
-            segments = selected_axis_to_dense_axis(segments, selected_meta)
+        if not has_selected_axis_meta:
+            raise ValueError(
+                "convert_to_seconds(source_axis='selected') requires irregular_selected_positions "
+                "and irregular_selected_valid_len."
+            )
+        selected_meta = dict(meta)
+        selected_meta["irregular_native_axis"] = False
+        segments = selected_axis_to_dense_axis(segments, selected_meta)
     elif source_axis == "auto":
         if has_selected_axis_meta and not meta.get("irregular_native_axis", False):
             segments = selected_axis_to_dense_axis(segments, meta)

@@ -47,6 +47,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         detach_cls_input_from_backbone=False,
         detach_reg_input_from_backbone=False,
         cls_loss_weight_schedule=None,
+        route_contract=None,
         debug_cfg=None,
     ):
         super().__init__()
@@ -81,6 +82,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         self.detach_cls_input_from_backbone = detach_cls_input_from_backbone
         self.detach_reg_input_from_backbone = detach_reg_input_from_backbone
         self.cls_loss_weight_schedule = None if cls_loss_weight_schedule is None else dict(cls_loss_weight_schedule)
+        self.route_contract = {} if route_contract is None else dict(route_contract)
         self.current_train_epoch = 0
         self.loss_normalizer_momentum = loss_normalizer_momentum
         self.register_buffer("loss_normalizer", torch.tensor(float(loss_normalizer)))
@@ -252,7 +254,7 @@ class IrregularActionFormerBridgeHead(nn.Module):
         if point_tensor.shape[-1] >= 5:
             left_scale = point_tensor[..., 3].clamp_min(self.reg_denom_floor)
             right_scale = point_tensor[..., 4].clamp_min(self.reg_denom_floor)
-            point_scale = (left_scale + right_scale).clamp_min(self.reg_denom_floor)
+            point_scale = (0.5 * (left_scale + right_scale)).clamp_min(self.reg_denom_floor)
         else:
             point_scale = point_tensor[..., 3].clamp_min(self.reg_denom_floor)
             left_scale = point_scale
@@ -271,9 +273,10 @@ class IrregularActionFormerBridgeHead(nn.Module):
 
     def _scale_base(self, left_scale, right_scale, point_scale, mode, range_scale=None, radius_scale=None):
         if mode == "full_cell_span":
-            return point_scale.clamp_min(self.reg_denom_floor)
+            legacy_cell_span = (left_scale + right_scale).clamp_min(self.reg_denom_floor)
+            return legacy_cell_span
         if mode == "half_cell_span":
-            return (0.5 * point_scale).clamp_min(self.reg_denom_floor)
+            return (0.5 * (left_scale + right_scale)).clamp_min(self.reg_denom_floor)
         if mode == "min_side":
             return torch.minimum(left_scale, right_scale).clamp_min(self.reg_denom_floor)
         if mode == "left_right_mean":
@@ -643,6 +646,11 @@ class IrregularActionFormerBridgeHead(nn.Module):
 
             if self.debug_enabled:
                 positive_mask = cls_targets.sum(dim=-1) > 0
+                debug_state.setdefault("bridge_hard_assignment_uses_build_candidate_mask", []).append(False)
+                debug_state.setdefault("bridge_hard_missing_center_fallback_applied", []).append(False)
+                debug_state.setdefault("bridge_center_fallback_inside_gt_enabled", []).append(
+                    bool(self.allow_center_fallback_inside_gt)
+                )
                 debug_state.setdefault("bridge_num_gt_per_sample", []).append(int(num_gts))
                 debug_state.setdefault("bridge_positive_points_per_sample", []).append(int(positive_mask.sum().item()))
                 debug_state.setdefault("bridge_reg_weight_sum_per_sample", []).append(float(reg_weight.sum().item()))
@@ -711,6 +719,10 @@ class IrregularActionFormerBridgeHead(nn.Module):
             if self.debug_enabled:
                 positive_mask = cls_targets.max(dim=-1).values > 0
                 multi_gt_mask = (assign_weights > 0).sum(dim=1) > 1
+                debug_state.setdefault("bridge_soft_assignment_uses_build_candidate_mask", []).append(True)
+                debug_state.setdefault("bridge_soft_missing_center_fallback_enabled", []).append(
+                    bool(self.allow_center_fallback_inside_gt)
+                )
                 debug_state.setdefault("bridge_num_gt_per_sample", []).append(int(num_gts))
                 debug_state.setdefault("bridge_candidate_points_per_sample", []).append(int(candidate_mask.any(dim=1).sum().item()))
                 debug_state.setdefault("bridge_positive_points_per_sample", []).append(int(positive_mask.sum().item()))
