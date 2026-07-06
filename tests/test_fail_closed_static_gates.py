@@ -248,6 +248,7 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
     assert "detection_quality_summary_" in runner
     assert "detection_quality_rows_" in runner
     assert "stage2_dense_gate.json" in runner
+    assert "--brief" in runner
     assert "torchrun" not in runner
     assert "tools/train.py" not in runner
     assert "srun --jobid=1118197" not in runner

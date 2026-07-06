@@ -107,3 +107,20 @@ def test_stage2_dense_gate_blocks_short_long_submission_on_empty_quality(tmp_pat
     assert row["ok"] is False
     assert "quality_num_predictions_below_threshold" in row["blocked_reasons"]
     assert "quality_recall@0.30_below_threshold" in row["blocked_reasons"]
+
+
+def test_stage2_dense_gate_brief_summary_is_monitor_friendly(tmp_path):
+    gate = load_gate_module()
+    target = next(item for item in gate.TARGETS if item.label == "near63_random_short")
+    write_target(tmp_path, target.exp_dir, average_map=3.0)
+
+    report = gate.summarize_stage2(tmp_path)
+    brief = gate.format_brief(report)
+
+    assert "can_submit_long_after_short=False" in brief
+    assert "near63_random_short" in brief
+    assert "avg_mAP=3.00" in brief
+    assert "preds=10" in brief
+    assert "recall@0.30=0.5000" in brief
+    assert "near65_uniform_short" in brief
+    assert "missing_artifacts" in brief

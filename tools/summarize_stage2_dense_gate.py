@@ -201,10 +201,43 @@ def summarize_stage2(root: Path) -> dict:
     }
 
 
+def format_brief(report: dict) -> str:
+    overall = report["overall"]
+    lines = [
+        "Stage-2 dense gate summary:",
+        f"  can_submit_long_after_short={overall['can_submit_long_after_short']}",
+        f"  long_dense_sanity_pass={overall['long_dense_sanity_pass']}",
+        "  targets:",
+    ]
+    for item in report["targets"]:
+        log = item["log"]
+        quality_summary = item["quality"].get("summary") if isinstance(item["quality"].get("summary"), dict) else {}
+        average_map = log.get("average_mAP")
+        average_map_text = "NA" if average_map is None else f"{float(average_map):.2f}"
+        predictions = quality_summary.get("num_predictions", "NA")
+        recall_030 = quality_summary.get("recall@0.30")
+        recall_text = "NA" if recall_030 is None else f"{float(recall_030):.4f}"
+        reasons = ",".join(item["blocked_reasons"]) if item["blocked_reasons"] else "none"
+        lines.append(
+            "    - {label}: ok={ok} split={split} avg_mAP={avg} preds={preds} "
+            "recall@0.30={recall} reasons={reasons}".format(
+                label=item["label"],
+                ok=item["ok"],
+                split=item["split"],
+                avg=average_map_text,
+                preds=predictions,
+                recall=recall_text,
+                reasons=reasons,
+            )
+        )
+    return "\n".join(lines)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", default=".", help="Repository root containing exps/")
     parser.add_argument("--json-out", default=None, help="Optional path to write the gate summary JSON")
+    parser.add_argument("--brief", action="store_true", help="Print a compact human-readable summary before JSON")
     parser.add_argument(
         "--fail-on-blocked",
         action="store_true",
@@ -216,6 +249,8 @@ def parse_args():
 def main():
     args = parse_args()
     report = summarize_stage2(Path(args.root).resolve())
+    if args.brief:
+        print(format_brief(report))
     print(json.dumps(report, indent=2, sort_keys=True))
     if args.json_out:
         output_path = Path(args.json_out)

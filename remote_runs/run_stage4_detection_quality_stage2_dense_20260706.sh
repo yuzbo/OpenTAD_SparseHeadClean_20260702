@@ -78,7 +78,7 @@ for item in "${TARGETS[@]}"; do
 done
 
 log_msg "summary analyzed=$analyzed missing=$missing"
-"$PYTHON_BIN" tools/summarize_stage2_dense_gate.py --root "$ROOT" --json-out "$GATE_JSON"
+"$PYTHON_BIN" tools/summarize_stage2_dense_gate.py --root "$ROOT" --json-out "$GATE_JSON" --brief
 log_msg "gate_json=$GATE_JSON"
 if [[ "$REQUIRE_RESULTS" == "1" && "$analyzed" -eq 0 ]]; then
   echo "No Stage-2 dense result_detection.json files found." >&2
