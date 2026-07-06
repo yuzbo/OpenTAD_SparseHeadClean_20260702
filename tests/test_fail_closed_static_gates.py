@@ -94,3 +94,12 @@ def test_stage23_limited_runner_scripts_are_explicit_and_preflight_only():
     assert "--configs \"$SELECTED_BRIDGE_CFG\"" in stage3_text
     assert "--configs \"$NATIVE_BRIDGE_CFG\"" in stage3_text
     assert '--configs "${CONFIGS[@]}"' not in stage3_text
+
+
+def test_gpu1_same_batch_runner_compares_open_abs_levelstride_not_radiuslevel():
+    runner = (ROOT / "remote_runs/run_gpu1_same_batch_audit_20260705.sh").read_text(encoding="utf-8")
+
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_openrange_n16r4.py" in runner
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_n16r4.py" in runner
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_levelstride_n16r4.py" in runner
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_radiuslevel_n16r4.py" not in runner
