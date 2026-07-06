@@ -1194,3 +1194,31 @@ def test_irregular_actionformer_native_grid_preserves_dense_right_boundary_on_li
     assert torch.allclose(grid["cell_right"], torch.tensor([[2.0, 3.0, 95.0, 668.0]]))
     assert torch.equal(grid["valid_mask"], masks)
     assert torch.equal(grid["fresh_mask"], masks)
+
+
+def test_bridge_dense_equivalence_verifier_contract_exists():
+    script = read("tools/verify_bridge_dense_equivalence.py")
+
+    assert "def official_dense_targets(" in script
+    assert "def compare_bridge_to_official(" in script
+    assert "def run_all_checks(" in script
+    assert "stride1_dense_open_range" in script
+    assert "multi_level_range_gate" in script
+    assert "--json" in script
+
+
+def test_bridge_dense_equivalence_verifier_smoke_on_linux():
+    import_torch_or_skip()
+    verifier = load_module("tools/verify_bridge_dense_equivalence.py", "bridge_dense_equivalence_verifier")
+
+    summary = verifier.run_all_checks()
+
+    assert summary["ok"] is True
+    assert [case["name"] for case in summary["cases"]] == [
+        "stride1_dense_open_range",
+        "multi_level_range_gate",
+    ]
+    for case in summary["cases"]:
+        assert case["mismatches"] == []
+        assert case["positive_count"] > 0
+        assert case["decoded_max_abs_error"] <= 1e-6

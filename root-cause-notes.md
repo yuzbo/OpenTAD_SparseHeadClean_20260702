@@ -226,3 +226,16 @@ Reference snapshot:
 - Added `remote_runs/precheck_official_dense_selected_axis_sanity_20260706.sh` as a fail-closed local/remote precheck. It only performs config contract validation, `py_compile`, and optional pytest via `RUN_PYTEST=1`; it does not launch training, Slurm, sync, or torchrun.
 - Enhanced `scripts/verify_official_dense_reference.py` with an explicit selected-axis dense sanity config validator while keeping the default upstream dense-reference diff behavior intact.
 - Interpretation limit: this proves the repository can load and precheck an equal-interval 50% selected-axis dense-head sanity route without accidentally selecting the native sparse/bridge head. It does not prove mAP recovery or attribute any remaining gap to projection, neck, head, assignment, or post-processing until a controlled training/evaluation run is launched separately.
+
+## Stage 3: Bridge Dense-Equivalence Sanity (2026-07-06)
+
+- Added `tools/verify_bridge_dense_equivalence.py` as a synthetic fail-closed verifier for the bridge hard dense-equivalence contract. It constructs dense/uniform grids and compares the real `IrregularActionFormerBridgeHead._prepare_targets_hard` plus `get_refined_proposals` against an independent implementation of official dense `AnchorFreeHead.prepare_targets` semantics.
+- Covered two small cases:
+  - `stride1_dense_open_range`: one dense stride-1 level with open official-like range, overlapping GTs, center sampling, shortest-GT assignment, stride-normalized linear targets, and linear decode.
+  - `multi_level_range_gate`: stride-1 plus stride-4 levels with explicit range gates, verifying short GT stays on the fine level while long GT is assigned on the coarse level.
+- The verifier checks positive mask, assigned GT, classification target, encoded regression target, and decoded proposal. Mismatches include point index, level/local index, center, range, official value, and bridge value.
+- Local verification on Windows:
+  - `python -m py_compile tools/verify_bridge_dense_equivalence.py`: passed.
+  - `python -m pytest tests/test_adapter_native_dense_headv2_contracts.py -q`: `30 passed, 12 skipped`.
+  - Direct verifier execution could not run locally because Windows torch import fails while loading `c10.dll`; this is consistent with the existing Linux-only torch test policy. Linux must run `python tools/verify_bridge_dense_equivalence.py` for actual tensor equivalence evidence.
+- No bridge/core head source changes were made in this stage. The verifier is intended to decide whether a core fix is needed before changing assignment/decode code.
