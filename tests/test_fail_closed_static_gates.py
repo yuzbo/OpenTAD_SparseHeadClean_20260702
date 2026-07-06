@@ -185,7 +185,7 @@ def test_stage2_gpu1_short_waiter_requires_true_idle_gpu1_before_launch():
 
     assert "GPU_INDEX=\"${GPU_INDEX:-1}\"" in waiter
     assert "GPU_MEM_FREE_MAX_MIB=\"${GPU_MEM_FREE_MAX_MIB:-100}\"" in waiter
-    assert "SSH_TIMEOUT_SECONDS=\"${SSH_TIMEOUT_SECONDS:-20}\"" in waiter
+    assert "SSH_TIMEOUT_SECONDS=\"${SSH_TIMEOUT_SECONDS:-60}\"" in waiter
     assert "ALLOWED_EXISTING_STEP_REGEX=" in waiter
     assert 'timeout "$SSH_TIMEOUT_SECONDS" /usr/bin/ssh "$NODE"' in waiter
     assert "--query-gpu=index,uuid,memory.used" in waiter
