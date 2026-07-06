@@ -2,7 +2,8 @@
 """Verify bridge hard dense-equivalence against official dense semantics.
 
 This is a small synthetic sanity verifier, not a training entrypoint. It
-constructs dense/uniform point grids and compares the real
+constructs dense/uniform point grids, including grids emitted by the real
+IrregularPointGeneratorV2, and compares the real
 IrregularActionFormerBridgeHead hard target/decode path against an independent
 implementation of the official dense ActionFormer target contract.
 """
@@ -16,7 +17,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CASE_NAMES = ("stride1_dense_open_range", "multi_level_range_gate")
+CASE_NAMES = (
+    "stride1_dense_open_range",
+    "multi_level_range_gate",
+    "generated_v2_levelstride_equivalence",
+)
 
 
 def _import_torch():
@@ -36,6 +41,16 @@ def _import_bridge_head():
     except Exception as exc:  # pragma: no cover - dependency failures are environment-specific.
         raise RuntimeError(f"failed to import IrregularActionFormerBridgeHead: {exc}") from exc
     return IrregularActionFormerBridgeHead
+
+
+def _import_irregular_point_generator_v2():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    try:
+        from opentad.models.dense_heads.prior_generator.irregular_point_generator import IrregularPointGeneratorV2
+    except Exception as exc:  # pragma: no cover - dependency failures are environment-specific.
+        raise RuntimeError(f"failed to import IrregularPointGeneratorV2: {exc}") from exc
+    return IrregularPointGeneratorV2
 
 
 def _new_bridge_head(num_classes):
@@ -73,6 +88,61 @@ def _make_level(center_values, stride, reg_range):
     # For dense equivalence, decode/radius/linear denominator all equal level stride.
     bridge = torch.stack([centers, reg_min, reg_max, strides, strides, strides, strides], dim=-1)
     return official, bridge
+
+
+def _make_temporal_grid(centers, stride):
+    torch, _ = _import_torch()
+    center = _tensor(centers).unsqueeze(0)
+    scale = torch.full_like(center, float(stride))
+    return {
+        "center": center,
+        "cell_left": scale,
+        "cell_right": scale,
+    }
+
+
+def _level_length(level_points):
+    return int(level_points.shape[1] if level_points.dim() == 3 else level_points.shape[0])
+
+
+def _generated_v2_to_official_dense(generated_points, atol=1e-6):
+    """Convert V2 [B, T, 7] points to official dense [T, 4] points.
+
+    The generated case intentionally configures decode/radius fields as
+    level-stride constants, so the official dense stride is recovered from the
+    explicit V2 radius field. This keeps the target/decode comparison tied to
+    real generator output while preserving official [center, range, stride]
+    semantics.
+    """
+
+    torch, _ = _import_torch()
+    official_points = []
+    for level_idx, level_points in enumerate(generated_points):
+        if level_points.dim() != 3 or level_points.shape[0] != 1 or level_points.shape[-1] < 7:
+            raise ValueError(
+                "generated V2 verifier expects each level to have shape [1, T, 7], "
+                f"got level {level_idx}: {tuple(level_points.shape)}"
+            )
+        squeezed = level_points[0]
+        decode_left = squeezed[:, 3]
+        decode_right = squeezed[:, 4]
+        radius_scale = squeezed[:, 6]
+        if not torch.allclose(decode_left, decode_right, atol=atol, rtol=0.0):
+            raise ValueError(f"generated V2 level {level_idx} decode left/right are not dense-stride equivalent")
+        if not torch.allclose(decode_left, radius_scale, atol=atol, rtol=0.0):
+            raise ValueError(f"generated V2 level {level_idx} decode/radius scales are not dense-stride equivalent")
+        official_points.append(
+            torch.stack(
+                [
+                    squeezed[:, 0],
+                    squeezed[:, 1],
+                    squeezed[:, 2],
+                    radius_scale,
+                ],
+                dim=-1,
+            )
+        )
+    return official_points
 
 
 def official_dense_targets(
@@ -177,7 +247,7 @@ def _bridge_targets_and_decode(bridge_points, gt_segments, gt_labels, num_classe
     reg_pred = []
     start = 0
     for level_points in bridge_points:
-        length = int(level_points.shape[0])
+        length = _level_length(level_points)
         reg_pred.append(reg_targets[start : start + length].transpose(0, 1).unsqueeze(0))
         start += length
     decoded = head.get_refined_proposals(bridge_points, reg_pred)[0]
@@ -356,8 +426,42 @@ def _case_multi_level_range_gate():
     }
 
 
+def _case_generated_v2_levelstride_equivalence():
+    torch, _ = _import_torch()
+    IrregularPointGeneratorV2 = _import_irregular_point_generator_v2()
+    generator = IrregularPointGeneratorV2(
+        strides=[1.0, 4.0],
+        regression_range=[(0.0, 4.0), (4.0, 10000.0)],
+        range_mode="absolute",
+        decode_scale_mode="level_stride",
+        radius_scale_mode="level_stride",
+    )
+    feat_list = [
+        torch.zeros(1, 1, 16),
+        torch.zeros(1, 1, 5),
+    ]
+    temporal_grid_list = [
+        _make_temporal_grid(range(16), stride=1.0),
+        _make_temporal_grid([0.0, 4.0, 8.0, 12.0, 16.0], stride=4.0),
+    ]
+    bridge_points = generator(feat_list, temporal_grid_list)
+    official_points = _generated_v2_to_official_dense(bridge_points)
+    return {
+        "name": "generated_v2_levelstride_equivalence",
+        "num_classes": 4,
+        "official_points": official_points,
+        "bridge_points": bridge_points,
+        "gt_segments": _tensor([[2.0, 4.0], [2.0, 14.0]]),
+        "gt_labels": _tensor([0, 1], dtype=torch.long),
+    }
+
+
 def build_cases():
-    return [_case_stride1_dense_open_range(), _case_multi_level_range_gate()]
+    return [
+        _case_stride1_dense_open_range(),
+        _case_multi_level_range_gate(),
+        _case_generated_v2_levelstride_equivalence(),
+    ]
 
 
 def run_all_checks(case_name=None, atol=1e-6):
@@ -394,7 +498,7 @@ def _format_text(summary):
             for example in mismatch["examples"]:
                 lines.append(
                     "    point={point} level={level} local={local} center={center} "
-                    "official={official} bridge={bridge}".format(**example)
+                    "range={range} official={official} bridge={bridge}".format(**example)
                 )
     lines.append("overall: " + ("OK" if summary["ok"] else "FAIL"))
     return "\n".join(lines)

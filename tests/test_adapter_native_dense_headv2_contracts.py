@@ -1464,6 +1464,7 @@ def test_bridge_dense_equivalence_verifier_contract_exists():
     assert "def run_all_checks(" in script
     assert "stride1_dense_open_range" in script
     assert "multi_level_range_gate" in script
+    assert "generated_v2_levelstride_equivalence" in script
     assert "--json" in script
 
 
@@ -1477,6 +1478,7 @@ def test_bridge_dense_equivalence_verifier_smoke_on_linux():
     assert [case["name"] for case in summary["cases"]] == [
         "stride1_dense_open_range",
         "multi_level_range_gate",
+        "generated_v2_levelstride_equivalence",
     ]
     for case in summary["cases"]:
         assert case["mismatches"] == []

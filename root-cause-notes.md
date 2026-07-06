@@ -258,6 +258,8 @@ Reference snapshot:
   - `python -m pytest tests/test_adapter_native_dense_headv2_contracts.py -q`: `30 passed, 12 skipped`.
   - Direct verifier execution could not run locally because Windows torch import fails while loading `c10.dll`; this is consistent with the existing Linux-only torch test policy. Linux must run `python tools/verify_bridge_dense_equivalence.py` for actual tensor equivalence evidence.
 - No bridge/core head source changes were made in this stage. The verifier is intended to decide whether a core fix is needed before changing assignment/decode code.
+- Stage-FIX-B update: `tools/verify_bridge_dense_equivalence.py` now extends the bridge dense-equivalence verifier beyond hand-built stride-like points. It adds `generated_v2_levelstride_equivalence`, which calls the real `IrregularPointGeneratorV2` on a uniform dense temporal grid with absolute regression ranges and level-stride decode/radius fields, then converts the generated `[center, reg_min, reg_max, decode_left, decode_right, range_scale, radius_scale]` layout into official dense `[center, reg_min, reg_max, stride]` semantics for the same official-vs-bridge target/decode comparison.
+- Interpretation limit: this is still a synthetic target/decode contract check, not mAP evidence. Passing it would show that bridge hard assignment and linear decode can match official dense semantics on generated V2 points in the covered uniform-grid case; it does not prove projection/neck behavior, training convergence, post-processing calibration, or THUMOS mAP recovery.
 
 ## Stage 4 Selected-Axis Random/Uniform Controls - 2026-07-06
 
