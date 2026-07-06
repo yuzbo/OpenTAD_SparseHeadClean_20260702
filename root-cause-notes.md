@@ -185,6 +185,7 @@ Reference snapshot:
   - Added deterministic `uniform_fixed_subsample` to support equal-interval 50% sanity controls without changing the existing `random_fixed_subsample` behavior.
   - Added `scripts/verify_official_dense_reference.py` to diff the local dense-reference files against upstream OpenTAD raw files, and added a Linux-only bridge hard uniform-grid target test that locks the official dense target/decode semantics in the stride-1 case.
   - Local dry run `python scripts/verify_official_dense_reference.py --no-fail-on-diff` succeeded and reported dense-reference drift, including major local changes in `anchor_free_head.py` and extra grid-aware FPN classes. Treat this as evidence that current-repo dense code is not an authoritative official baseline.
+  - Stage 1 same-batch audit extension: `tools/audit_sparse_head_assignment.py` now reports `assigned_positive_target_decode_iou` and `oracle_assigned_recall@IoU` for hard-assigned positives on proposal, native, and seconds axes. This checks whether assigned positives still reconstruct high-IoU targets after target encode/decode, so positive coverage is no longer mistaken for localization correctness. It is diagnostic evidence only and is not an mAP conclusion.
 
 - Stop prioritizing geometry ablations until the supervision path is repaired.
 - Stop treating missing regression range gate as a standalone primary cause; the completed `reggate` run refutes that narrow hypothesis.

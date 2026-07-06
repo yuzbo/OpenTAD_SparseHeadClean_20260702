@@ -321,6 +321,11 @@ def test_bridge_head_exposes_explicit_radius_and_regression_scale_modes():
 def test_sparse_head_assignment_audit_tool_contract():
     script = read("tools/audit_sparse_head_assignment.py")
 
+    assert "def segment_iou(" in script
+    assert "def axis_segments_to_native(" in script
+    assert "def axis_segments_to_seconds(" in script
+    assert "assigned_positive_target_decode_iou" in script
+    assert "oracle_assigned_recall@IoU" in script
     assert "sample_id" in script
     assert "video_name" in script
     assert "gt_axis" in script
@@ -339,6 +344,42 @@ def test_sparse_head_assignment_audit_tool_contract():
     assert "--configs" in script
     assert "--num-batches" in script
     assert "--seed" in script
+
+
+def test_sparse_head_assignment_segment_iou_handles_pairwise_and_matrix_on_linux():
+    torch = import_torch_or_skip()
+    pytest.importorskip("mmengine.config")
+    audit = load_module("tools/audit_sparse_head_assignment.py", "sparse_head_assignment_audit_iou")
+
+    anchors = torch.tensor(
+        [
+            [0.0, 10.0],
+            [0.0, 10.0],
+            [0.0, 2.0],
+            [5.0, 5.0],
+        ]
+    )
+    targets = torch.tensor(
+        [
+            [0.0, 10.0],
+            [5.0, 15.0],
+            [3.0, 4.0],
+            [5.0, 8.0],
+        ]
+    )
+
+    pairwise = audit.segment_iou(anchors, targets, pairwise=True)
+
+    assert torch.allclose(pairwise, torch.tensor([1.0, 5.0 / 15.0, 0.0, 0.0]))
+
+    matrix = audit.segment_iou(
+        torch.tensor([[0.0, 10.0], [20.0, 30.0]]),
+        torch.tensor([[5.0, 15.0], [20.0, 30.0], [8.0, 8.0]]),
+    )
+
+    assert matrix.shape == (2, 3)
+    assert torch.allclose(matrix[0], torch.tensor([5.0 / 15.0, 0.0, 0.0]))
+    assert torch.allclose(matrix[1], torch.tensor([0.0, 1.0, 0.0]))
 
 
 def test_detection_quality_analyzer_reports_high_iou_recall_and_boundary_error(tmp_path):

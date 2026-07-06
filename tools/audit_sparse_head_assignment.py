@@ -16,9 +16,11 @@ if str(ROOT) not in sys.path:
 
 from opentad.datasets import build_dataloader, build_dataset
 from opentad.models import build_detector
+from opentad.models.utils.post_processing import convert_to_seconds, selected_axis_to_dense_axis
 
 
 LENGTH_BUCKETS = [0, 4, 8, 16, 32, 64, 128, float("inf")]
+IOU_RECALL_THRESHOLDS = (0.3, 0.5, 0.7)
 
 
 def parse_args():
@@ -86,6 +88,65 @@ def max_or_none(values):
     if values.numel() == 0:
         return None
     return float(values.float().max().item())
+
+
+def mean_or_none(values):
+    if values.numel() == 0:
+        return None
+    return float(values.float().mean().item())
+
+
+def segment_iou(segments_a, segments_b, pairwise=False):
+    if pairwise:
+        if segments_a.shape != segments_b.shape:
+            raise ValueError(
+                "pairwise segment_iou requires segments_a and segments_b to have the same shape, "
+                f"got {tuple(segments_a.shape)} and {tuple(segments_b.shape)}"
+            )
+        left = torch.maximum(segments_a[..., 0], segments_b[..., 0])
+        right = torch.minimum(segments_a[..., 1], segments_b[..., 1])
+        inter = (right - left).clamp_min(0.0)
+        len_a = (segments_a[..., 1] - segments_a[..., 0]).clamp_min(0.0)
+        len_b = (segments_b[..., 1] - segments_b[..., 0]).clamp_min(0.0)
+        union = len_a + len_b - inter
+        return torch.where(union > 0, inter / union, torch.zeros_like(union))
+
+    segments_a = segments_a.reshape(-1, 2)
+    segments_b = segments_b.reshape(-1, 2)
+    left = torch.maximum(segments_a[:, None, 0], segments_b[None, :, 0])
+    right = torch.minimum(segments_a[:, None, 1], segments_b[None, :, 1])
+    inter = (right - left).clamp_min(0.0)
+    len_a = (segments_a[:, 1] - segments_a[:, 0]).clamp_min(0.0)[:, None]
+    len_b = (segments_b[:, 1] - segments_b[:, 0]).clamp_min(0.0)[None, :]
+    union = len_a + len_b - inter
+    return torch.where(union > 0, inter / union, torch.zeros_like(union))
+
+
+def iou_summary(values):
+    return {
+        "count": int(values.numel()),
+        "min": None if values.numel() == 0 else float(values.float().min().item()),
+        "mean": mean_or_none(values),
+        "p50": quantile_or_none(values, 0.5),
+        "p90": quantile_or_none(values, 0.9),
+        "max": max_or_none(values),
+    }
+
+
+def axis_segments_to_native(segments, meta, source_axis):
+    if source_axis == "native":
+        return segments
+    if source_axis == "selected":
+        selected_meta = dict(meta or {})
+        selected_meta["irregular_native_axis"] = False
+        return selected_axis_to_dense_axis(segments, selected_meta)
+    raise ValueError(f"Unsupported segment axis conversion: {source_axis} -> native")
+
+
+def axis_segments_to_seconds(segments, meta, source_axis):
+    seconds_meta = dict(meta or {})
+    seconds_meta["irregular_native_axis"] = source_axis == "native"
+    return convert_to_seconds(segments.clone(), seconds_meta)
 
 
 def scalar_list(values):
@@ -316,6 +377,112 @@ def build_hard_diagnostics(head, point, gt_segment, offsets):
     return result
 
 
+@torch.no_grad()
+def build_assigned_positive_decode_iou(head, point, gt_segment, assigned, meta, proposal_axis):
+    num_pts = int(point.shape[0])
+    num_gts = int(gt_segment.shape[0])
+    pos = assigned >= 0
+    empty_iou = point.new_empty((0,))
+    diagnostics = {
+        "positive_count": int(pos.sum().item()),
+        "proposal_axis": iou_summary(empty_iou),
+        "native_axis": iou_summary(empty_iou),
+        "seconds_axis": iou_summary(empty_iou),
+        "per_gt": [
+            {
+                "gt_idx": int(gt_idx),
+                "max_iou_by_axis": {
+                    "proposal_axis": None,
+                    "native_axis": None,
+                    "seconds_axis": None,
+                },
+                "oracle_assigned_recall@IoU": {
+                    "proposal_axis": {f"{threshold:.1f}": False for threshold in IOU_RECALL_THRESHOLDS},
+                    "native_axis": {f"{threshold:.1f}": False for threshold in IOU_RECALL_THRESHOLDS},
+                    "seconds_axis": {f"{threshold:.1f}": False for threshold in IOU_RECALL_THRESHOLDS},
+                },
+            }
+            for gt_idx in range(num_gts)
+        ],
+        "oracle_assigned_recall@IoU": {
+            "proposal_axis": {f"{threshold:.1f}": None for threshold in IOU_RECALL_THRESHOLDS},
+            "native_axis": {f"{threshold:.1f}": None for threshold in IOU_RECALL_THRESHOLDS},
+            "seconds_axis": {f"{threshold:.1f}": None for threshold in IOU_RECALL_THRESHOLDS},
+        },
+    }
+    if num_pts == 0 or num_gts == 0:
+        return diagnostics
+
+    center_t, _, _, left_scale, right_scale, point_scale, range_scale, radius_scale = point_fields(head, point)
+    if pos.any():
+        rows = torch.arange(num_pts, device=point.device)[pos]
+        cols = assigned[pos]
+        assigned_gt_segments = gt_segment[cols]
+        raw_left = center_t[rows] - assigned_gt_segments[:, 0]
+        raw_right = assigned_gt_segments[:, 1] - center_t[rows]
+        enc = encode_targets(
+            head,
+            raw_left,
+            raw_right,
+            left_scale[pos],
+            right_scale[pos],
+            point_scale[pos],
+            range_scale=range_scale[pos],
+            radius_scale=radius_scale[pos],
+        )
+        dec_left, dec_right = decode_encoded_targets(
+            head,
+            enc,
+            left_scale[pos],
+            right_scale[pos],
+            point_scale[pos],
+            range_scale=range_scale[pos],
+            radius_scale=radius_scale[pos],
+        )
+        decoded_segments = torch.stack((center_t[rows] - dec_left, center_t[rows] + dec_right), dim=-1)
+    else:
+        cols = torch.empty((0,), dtype=torch.long, device=point.device)
+        assigned_gt_segments = gt_segment.new_empty((0, 2))
+        decoded_segments = gt_segment.new_empty((0, 2))
+
+    decoded_native = axis_segments_to_native(decoded_segments, meta, proposal_axis)
+    assigned_native = axis_segments_to_native(assigned_gt_segments, meta, proposal_axis)
+    decoded_seconds = axis_segments_to_seconds(decoded_segments, meta, proposal_axis)
+    assigned_seconds = axis_segments_to_seconds(assigned_gt_segments, meta, proposal_axis)
+    iou_by_axis = {
+        "proposal_axis": segment_iou(decoded_segments, assigned_gt_segments, pairwise=True),
+        "native_axis": segment_iou(decoded_native, assigned_native, pairwise=True),
+        "seconds_axis": segment_iou(decoded_seconds, assigned_seconds, pairwise=True),
+    }
+
+    for axis_name, values in iou_by_axis.items():
+        diagnostics[axis_name] = iou_summary(values)
+
+    for gt_idx in range(num_gts):
+        gt_mask = cols == gt_idx
+        per_gt = diagnostics["per_gt"][gt_idx]
+        for axis_name, values in iou_by_axis.items():
+            gt_values = values[gt_mask]
+            max_iou = max_or_none(gt_values)
+            per_gt["max_iou_by_axis"][axis_name] = max_iou
+            for threshold in IOU_RECALL_THRESHOLDS:
+                per_gt["oracle_assigned_recall@IoU"][axis_name][f"{threshold:.1f}"] = (
+                    False if max_iou is None else bool(max_iou >= threshold)
+                )
+
+    for axis_name in iou_by_axis:
+        for threshold in IOU_RECALL_THRESHOLDS:
+            covered = [
+                per_gt["oracle_assigned_recall@IoU"][axis_name][f"{threshold:.1f}"]
+                for per_gt in diagnostics["per_gt"]
+            ]
+            diagnostics["oracle_assigned_recall@IoU"][axis_name][f"{threshold:.1f}"] = float(
+                sum(covered) / num_gts
+            )
+
+    return diagnostics
+
+
 def meta_value(meta, key, default=None):
     if isinstance(meta, dict):
         return meta.get(key, default)
@@ -379,12 +546,26 @@ def audit_config(config_path, batches, split, device):
             meta = metas[sample_idx] if metas is not None else {}
             sample_id = make_sample_id(batch_idx, sample_idx, meta)
             axes = axis_contract(meta)
+            assignment_mode = getattr(head, "assignment_mode", "unknown")
             diag = build_hard_diagnostics(head, point, gt_segment, offsets)
             assigned = diag.pop("assigned_gt")
             reg_weight = reg_weight_list[sample_idx]
             per_level_pos_count = []
             valid_mask_true_count = []
             gt_coverage = []
+            decode_iou_diag = None
+            per_gt_decode_iou = {}
+
+            if assignment_mode == "hard":
+                decode_iou_diag = build_assigned_positive_decode_iou(
+                    head,
+                    point,
+                    gt_segment,
+                    assigned,
+                    meta,
+                    axes["proposal_axis"],
+                )
+                per_gt_decode_iou = {entry["gt_idx"]: entry for entry in decode_iou_diag["per_gt"]}
 
             for lo, hi in offsets:
                 if reg_weight is not None:
@@ -400,60 +581,75 @@ def audit_config(config_path, batches, split, device):
                 for lo, hi in offsets:
                     level_bitmap.append(bool((assigned[lo:hi] == gt_idx).any().item()))
                 gt_len = float((gt[1] - gt[0]).item())
-                gt_coverage.append(
-                    {
-                        "gt_idx": int(gt_idx),
-                        "gt_length": gt_len,
-                        "gt_length_bucket": length_bucket(gt_len),
-                        "gt_covered_any": bool(any(level_bitmap)),
-                        "gt_covered_level_bitmap": level_bitmap,
-                        "gt_num_assigned_points": int((assigned == gt_idx).sum().item()),
-                    }
-                )
-
-            rows.append(
-                {
-                    "config": str(config_path),
-                    "config_name": Path(config_path).stem,
-                    "split": split,
-                    "batch_idx": int(batch_idx),
-                    "sample_idx": int(sample_idx),
-                    "sample_id": sample_id,
-                    "video_name": meta_value(meta, "video_name", "unknown"),
-                    "gt_axis": axes["gt_axis"],
-                    "proposal_axis": axes["proposal_axis"],
-                    "postprocess_axis": axes["postprocess_axis"],
-                    "num_gt": int(gt_segment.shape[0]),
-                    "assignment_mode": getattr(head, "assignment_mode", "unknown"),
-                    "regression_mode": getattr(head, "regression_mode", "unknown"),
-                    "center_radius_scale": getattr(head, "center_radius_scale", "legacy"),
-                    "reg_denom_mode": getattr(head, "reg_denom_mode", "legacy"),
-                    "range_mode": getattr(head.prior_generator, "range_mode", "unknown"),
-                    "level_count": level_count,
-                    "per_level_pos_count": per_level_pos_count,
-                    "per_level_candidate_count_before_range": diag["per_level_candidate_count_before_range"],
-                    "per_level_candidate_count_after_range": diag["per_level_candidate_count_after_range"],
-                    "inside_gt_count_by_level": diag["inside_gt_count_by_level"],
-                    "range_fail_count_by_level": diag["range_fail_count_by_level"],
-                    "center_fail_count_by_level": diag["center_fail_count_by_level"],
-                    "valid_mask_true_count": valid_mask_true_count,
-                    "multi_gt_conflict_count_before_shortest": diag["multi_gt_conflict_count_before_shortest"],
-                    "shortest_gt_resolved_count": diag["shortest_gt_resolved_count"],
-                    "radius_base_p50": diag["radius_base_p50"],
-                    "radius_base_p90": diag["radius_base_p90"],
-                    "gt_coverage": gt_coverage,
-                    "reg_target_left_p50": diag["reg_target_left_p50"],
-                    "reg_target_left_p90": diag["reg_target_left_p90"],
-                    "reg_target_left_max": diag["reg_target_left_max"],
-                    "reg_target_right_p50": diag["reg_target_right_p50"],
-                    "reg_target_right_p90": diag["reg_target_right_p90"],
-                    "reg_target_right_max": diag["reg_target_right_max"],
-                    "encoded_reg_p50": diag["encoded_reg_p50"],
-                    "encoded_reg_p90": diag["encoded_reg_p90"],
-                    "encoded_reg_max": diag["encoded_reg_max"],
-                    "decode_reconstruction_max_error": diag["decode_reconstruction_max_error"],
+                coverage_entry = {
+                    "gt_idx": int(gt_idx),
+                    "gt_length": gt_len,
+                    "gt_length_bucket": length_bucket(gt_len),
+                    "gt_covered_any": bool(any(level_bitmap)),
+                    "gt_covered_level_bitmap": level_bitmap,
+                    "gt_num_assigned_points": int((assigned == gt_idx).sum().item()),
                 }
-            )
+                if gt_idx in per_gt_decode_iou:
+                    coverage_entry.update(
+                        {
+                            "assigned_target_decode_iou_max": per_gt_decode_iou[gt_idx]["max_iou_by_axis"],
+                            "oracle_assigned_recall@IoU": per_gt_decode_iou[gt_idx][
+                                "oracle_assigned_recall@IoU"
+                            ],
+                        }
+                    )
+                gt_coverage.append(coverage_entry)
+
+            row = {
+                "config": str(config_path),
+                "config_name": Path(config_path).stem,
+                "split": split,
+                "batch_idx": int(batch_idx),
+                "sample_idx": int(sample_idx),
+                "sample_id": sample_id,
+                "video_name": meta_value(meta, "video_name", "unknown"),
+                "gt_axis": axes["gt_axis"],
+                "proposal_axis": axes["proposal_axis"],
+                "postprocess_axis": axes["postprocess_axis"],
+                "num_gt": int(gt_segment.shape[0]),
+                "assignment_mode": assignment_mode,
+                "regression_mode": getattr(head, "regression_mode", "unknown"),
+                "center_radius_scale": getattr(head, "center_radius_scale", "legacy"),
+                "reg_denom_mode": getattr(head, "reg_denom_mode", "legacy"),
+                "range_mode": getattr(head.prior_generator, "range_mode", "unknown"),
+                "level_count": level_count,
+                "per_level_pos_count": per_level_pos_count,
+                "per_level_candidate_count_before_range": diag["per_level_candidate_count_before_range"],
+                "per_level_candidate_count_after_range": diag["per_level_candidate_count_after_range"],
+                "inside_gt_count_by_level": diag["inside_gt_count_by_level"],
+                "range_fail_count_by_level": diag["range_fail_count_by_level"],
+                "center_fail_count_by_level": diag["center_fail_count_by_level"],
+                "valid_mask_true_count": valid_mask_true_count,
+                "multi_gt_conflict_count_before_shortest": diag["multi_gt_conflict_count_before_shortest"],
+                "shortest_gt_resolved_count": diag["shortest_gt_resolved_count"],
+                "radius_base_p50": diag["radius_base_p50"],
+                "radius_base_p90": diag["radius_base_p90"],
+                "gt_coverage": gt_coverage,
+                "reg_target_left_p50": diag["reg_target_left_p50"],
+                "reg_target_left_p90": diag["reg_target_left_p90"],
+                "reg_target_left_max": diag["reg_target_left_max"],
+                "reg_target_right_p50": diag["reg_target_right_p50"],
+                "reg_target_right_p90": diag["reg_target_right_p90"],
+                "reg_target_right_max": diag["reg_target_right_max"],
+                "encoded_reg_p50": diag["encoded_reg_p50"],
+                "encoded_reg_p90": diag["encoded_reg_p90"],
+                "encoded_reg_max": diag["encoded_reg_max"],
+                "decode_reconstruction_max_error": diag["decode_reconstruction_max_error"],
+            }
+            if decode_iou_diag is not None:
+                row["assigned_positive_target_decode_iou"] = {
+                    "positive_count": decode_iou_diag["positive_count"],
+                    "proposal_axis": decode_iou_diag["proposal_axis"],
+                    "native_axis": decode_iou_diag["native_axis"],
+                    "seconds_axis": decode_iou_diag["seconds_axis"],
+                }
+                row["oracle_assigned_recall@IoU"] = decode_iou_diag["oracle_assigned_recall@IoU"]
+            rows.append(row)
 
     return rows
 
