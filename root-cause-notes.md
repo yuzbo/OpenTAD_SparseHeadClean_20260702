@@ -135,6 +135,11 @@ Reference snapshot:
     - `remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh`
     These helpers run config-load and `py_compile` preflight before training `input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`.
   - Deployment status at 2026-07-06 11:45 CST: GPU1 is still occupied by the older `bridge_hard_linear_absrange_n16r4` long run (`Slurm step 1118197.621`, around epoch 25/60). That run was launched before the latest `absrange_expanded` candidate and should not be treated as post-fix evidence. Do not start `absrange_expanded` until GPU1 is free or the user explicitly asks to stop the older run.
+  - Deployment status at 2026-07-06 12:09 CST: the older `bridge_hard_linear_absrange_n16r4` run is still active on GPU1 (`Slurm step 1118197.621`, GPU1 about `8855/24564 MiB`, no `Traceback`/OOM/non-finite loss and no validation result yet). `absrange_expanded` still has no `gpu1_id1/log.json`, so it has not started.
+  - Added a conservative waiter for the next long run:
+    - `remote_runs/watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh`
+    - `remote_runs/launch_watch_gpu1_bridge_absrange_expanded_20260706.sh`
+    The waiter only polls for the old step `1118197.621` to disappear, exits if the target already has output/logs, and then calls the existing `launch_gpu1_bridge_absrange_expanded_long_20260706.sh`. It does not start training directly and is intended to avoid racing the current GPU1 job.
   - Added equal-interval 50% sanity configs to separate the claimed `~65` equal-interval baseline from random-fixed native sparse failure:
     - `configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_dense_control_pdrop0_n16r4.py`: dense `ActionFormerHead`, selected-axis GT, deterministic uniform 50% input. This is the fair current-repo counterpart for the equal-interval dense-control claim.
     - `configs/adatad/thumos/input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py`: current bridge hard + `absrange_expanded`, native-axis GT, deterministic uniform 50% input. This tests whether the corrected sparse bridge route still collapses when the sampling grid is regular.

@@ -627,6 +627,28 @@ def test_uniform_fixed_50pct_remote_launchers_are_gpu1_slurm_preflighted():
         assert "CUDA_VISIBLE_DEVICES=1" in launcher
 
 
+def test_absrange_expanded_waiter_only_launches_after_old_gpu1_step_clears():
+    waiter = read("remote_runs/watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh")
+    launcher = read("remote_runs/launch_watch_gpu1_bridge_absrange_expanded_20260706.sh")
+
+    assert 'OLD_STEP_ID="${OLD_STEP_ID:-1118197.621}"' in waiter
+    assert 'SLURM_JOB_ID_TARGET="${SLURM_JOB_ID_TARGET:-1118197}"' in waiter
+    assert 'TARGET_WORK_DIR="$ROOT/exps/thumos/adatad/input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4/gpu1_id1"' in waiter
+    assert 'TARGET_LAUNCHER="$ROOT/remote_runs/launch_gpu1_bridge_absrange_expanded_long_20260706.sh"' in waiter
+    assert 'LOG_DIR="$ROOT/logs/gpu1_bridge_absrange_expanded_waiter"' in waiter
+    assert "squeue --steps -j \"$SLURM_JOB_ID_TARGET\"" in waiter
+    assert "grep -Fxq \"$OLD_STEP_ID\"" in waiter
+    assert "target_already_started" in waiter
+    assert "MAX_WAIT_SECONDS" in waiter
+    assert "POLL_SECONDS" in waiter
+    assert "bash \"$TARGET_LAUNCHER\"" in waiter
+    assert "run_gpu1_bridge_absrange_expanded_long_20260706.sh" not in waiter
+
+    assert "nohup bash" in launcher
+    assert "watch_and_launch_gpu1_bridge_absrange_expanded_20260706.sh" in launcher
+    assert "logs/gpu1_bridge_absrange_expanded_waiter" in launcher
+
+
 def test_loadframes_records_explicit_axis_contract_metadata():
     load_frames_impl = read("opentad/datasets/transforms/end_to_end.py")
 
