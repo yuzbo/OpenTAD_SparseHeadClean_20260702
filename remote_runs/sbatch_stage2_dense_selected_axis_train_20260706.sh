@@ -12,6 +12,7 @@ CFG="${CFG:?Set CFG to a Stage-2 dense selected-axis config}"
 EXP_LABEL="${EXP_LABEL:-$(basename "$CFG" .py)}"
 EXP_ID="${EXP_ID:-0}"
 PORT="${PORT:-$((32000 + (${SLURM_JOB_ID:-0} % 10000)))}"
+RUN_STAGE4_AFTER="${RUN_STAGE4_AFTER:-1}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs/slurm_stage2_dense_selected_axis_long}"
 RUN_TAG="${RUN_TAG:-stage2_dense_axis_${EXP_LABEL}_${SLURM_JOB_ID:-manual}_$(date +%Y%m%d_%H%M%S)}"
 CHAIN_LOG="$LOG_DIR/${RUN_TAG}.log"
@@ -44,7 +45,7 @@ export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 cd "$ROOT"
 
-log_msg "start host=$(hostname) slurm_job=${SLURM_JOB_ID:-unset} cfg=$CFG label=$EXP_LABEL exp_id=$EXP_ID"
+log_msg "start host=$(hostname) slurm_job=${SLURM_JOB_ID:-unset} cfg=$CFG label=$EXP_LABEL exp_id=$EXP_ID run_stage4_after=$RUN_STAGE4_AFTER"
 log_msg "chain_log=$CHAIN_LOG"
 log_msg "train_log=$TRAIN_LOG"
 log_msg "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
@@ -92,4 +93,18 @@ log_msg "START train port=$PORT exp_id=$EXP_ID"
 torchrun --master_port="$PORT" --nproc_per_node=1 tools/train.py "$CFG" --id "$EXP_ID" 2>&1 | tee "$TRAIN_LOG"
 status=${PIPESTATUS[0]}
 log_msg "END train status=$status"
-exit "$status"
+if [[ "$status" != "0" ]]; then
+  exit "$status"
+fi
+
+if [[ "$RUN_STAGE4_AFTER" == "1" ]]; then
+  log_msg "START post-long Stage-4 detection quality"
+  (
+    unset CUDA_VISIBLE_DEVICES
+    RUN_TAG="${RUN_TAG}_stage4_quality" \
+    REQUIRE_RESULTS=1 \
+    PYTHON_BIN=python \
+    bash "$ROOT/remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh"
+  )
+  log_msg "END post-long Stage-4 detection quality"
+fi

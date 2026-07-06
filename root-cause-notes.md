@@ -454,3 +454,12 @@ Reference snapshot:
   - The hook unsets `CUDA_VISIBLE_DEVICES` before Stage-4, preserving the CPU-only quality-analysis boundary.
 - This closes an operational gap: once the Stage-2 GPU1 waiter eventually launches the two-epoch dense sanity smoke, high-IoU detection-quality diagnostics should be produced automatically without waiting for a manual follow-up command.
 - Remote preflight on synced commit `6ab8290` passed with `RUN_TRAIN=0 PRECHECK_ONLY=1 RUN_PYTEST=1`: fail-closed scan ok, both dense selected-axis configs load with the expected sampling contracts, `py_compile` ok, and the Stage-2 runner pytest gate passed (`2 passed, 8 deselected`). No training was launched by this preflight.
+
+## Stage-2 Long Slurm to Stage-4 Quality Auto-Hook - 2026-07-06
+
+- Added the same quality-analysis closure to `remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh`:
+  - Default `RUN_STAGE4_AFTER=1`.
+  - If training exits nonzero, the Slurm job returns the training error immediately.
+  - If training succeeds, the job runs `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` with `REQUIRE_RESULTS=1`.
+  - The Stage-4 child unsets `CUDA_VISIBLE_DEVICES`, preserving the CPU-only detection-quality boundary.
+- This does not by itself authorize long training. The gate remains: Stage-2 short smoke must first finish and produce sane dense selected-axis metrics plus Stage-4 quality output; only then should the long Slurm submitter be used.

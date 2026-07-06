@@ -146,6 +146,10 @@ def test_stage2_resource_boundary_short_gpu1_but_long_slurm_only():
     assert "tools/check_fail_closed_config.py" in slurm_body
     assert "tools/train.py" in slurm_body
     assert "torchrun" in slurm_body
+    assert "RUN_STAGE4_AFTER" in slurm_body
+    assert "run_stage4_detection_quality_stage2_dense_20260706.sh" in slurm_body
+    assert "unset CUDA_VISIBLE_DEVICES" in slurm_body
+    assert "REQUIRE_RESULTS=1" in slurm_body
     assert "srun --jobid=1118197" not in slurm_body
     assert "--overlap" not in slurm_body
     assert "export CUDA_VISIBLE_DEVICES=1" not in slurm_body
