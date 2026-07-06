@@ -431,6 +431,26 @@ def test_bridge_corrected_derivative_configs_clear_legacy_scale_opt_in():
         assert head.allow_legacy_full_cell_span is False
 
 
+def test_early_bridge_exploration_configs_make_scale_contract_explicit():
+    config_paths = [
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step0b_dense_points_soft_sym.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step0b_dense_points_soft_sym_repaired.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step1_irregular_points_hard_sym.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step2_irregular_points_hard_asym.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step3_irregular_points_soft_sym.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_step4_irregular_points_soft_asym.py",
+        "configs/adatad/thumos/input_random_fixed_50pct_irregular_actionformer_y_pointset_softsym_sanity.py",
+    ]
+
+    for config_path in config_paths:
+        cfg = load_mmengine_config_or_skip(config_path)
+        head = cfg.model.rpn_head
+        assert head.type == "IrregularActionFormerBridgeHead", config_path
+        assert head.center_radius_scale == "point_radius", config_path
+        assert head.reg_denom_mode == "left_right_mean", config_path
+        assert head.allow_legacy_full_cell_span is False, config_path
+
+
 def test_sparse_head_assignment_audit_tool_contract():
     script = read("tools/audit_sparse_head_assignment.py")
 
