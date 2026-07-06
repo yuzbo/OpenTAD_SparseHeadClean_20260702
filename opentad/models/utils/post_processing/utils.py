@@ -154,7 +154,7 @@ def sparse_visibility_support(segments, meta, min_support=0.0):
     endpoint_idx = torch.floor(coords).to(dtype=torch.long).clamp(min=0, max=local_gap.numel() - 1)
     endpoint_support = (expected_gap / local_gap[endpoint_idx]).clamp(max=1.0).min(dim=1).values
 
-    dense_segments = selected_axis_to_dense_axis(coords, meta)
+    dense_segments = selected_axis_to_dense_axis(coords, meta, strict=True)
     selected_len = (coords[:, 1] - coords[:, 0]).clamp(min=1e-6)
     dense_len = (dense_segments[:, 1] - dense_segments[:, 0]).clamp(min=1e-6)
     span_support = (selected_len * expected_gap / dense_len).clamp(max=1.0)

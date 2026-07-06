@@ -112,6 +112,12 @@ def _is_v2_v3_sparse_head(obj):
     return str(obj.get("type", "")) in {"IrregularActionFormerHeadV2", "IrregularActionFormerHeadV3"}
 
 
+def _has_audited_hard_compatible_marker(obj, contract):
+    return bool(_dict_get(obj, "audited_hard_compatible", False)) or bool(
+        _dict_get(contract, "audited_hard_compatible", False)
+    )
+
+
 def _violation(path, key, value, reason):
     return {"path": f"{path}.{key}", "key": key, "value": repr(_plain_value(value)), "reason": reason}
 
@@ -131,14 +137,16 @@ def scan_route_contract_object(obj, path):
             _dict_get(contract, "dense_equivalent_claim_allowed", False)
         )
         uses_center_fallback = bool(_dict_get(obj, "allow_center_fallback_inside_gt", False))
-        uses_soft_route = "soft_assign_topk" in obj or str(_dict_get(obj, "assignment_mode", "")).lower() == "soft"
+        assignment_mode = str(_dict_get(obj, "assignment_mode", "")).lower()
+        explicitly_soft_or_weighted = "soft_assign_topk" in obj or assignment_mode in {"soft", "weighted"}
+        uses_soft_route = explicitly_soft_or_weighted or not _has_audited_hard_compatible_marker(obj, contract)
         if dense_claim and (uses_soft_route or uses_center_fallback):
             violations.append(
                 _violation(
                     path,
                     "route_contract.dense_equivalent_claim_allowed",
                     _dict_get(contract, "dense_equivalent_claim_allowed", _dict_get(obj, "dense_equivalent_claim_allowed")),
-                    "dense-equivalent claim is forbidden for V2/V3 soft-assignment or missing-center fallback routes",
+                    "dense-equivalent claim is forbidden for V2/V3 soft/weighted/default-assignment or missing-center fallback routes",
                 )
             )
 

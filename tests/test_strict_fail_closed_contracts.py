@@ -218,6 +218,44 @@ def test_loadframes_selected_axis_gt_drop_fails_closed_by_default():
         )
 
 
+def test_loadframes_selected_axis_empty_positions_with_gt_fails_closed_by_default():
+    import numpy as np
+
+    end_to_end = load_end_to_end_with_test_stubs()
+    loader = object.__new__(end_to_end.LoadFrames)
+    loader.allow_drop_selected_axis_gt = False
+    loader._current_video_name = "video_empty_positions"
+
+    with pytest.raises(ValueError, match="kept_positions=0"):
+        loader._remap_gt_to_selected_axis(
+            gt_segments=np.asarray([[0.0, 5.0]], dtype=np.float32),
+            gt_labels=np.asarray([3], dtype=np.int32),
+            kept_positions=np.asarray([], dtype=np.int64),
+            valid_len=10,
+        )
+
+
+def test_loadframes_selected_axis_empty_positions_with_gt_allows_legacy_opt_in():
+    import numpy as np
+
+    end_to_end = load_end_to_end_with_test_stubs()
+    loader = object.__new__(end_to_end.LoadFrames)
+    loader.allow_drop_selected_axis_gt = True
+    loader._current_video_name = "video_empty_positions_legacy"
+
+    segments, labels = loader._remap_gt_to_selected_axis(
+        gt_segments=np.asarray([[0.0, 5.0]], dtype=np.float32),
+        gt_labels=np.asarray([3], dtype=np.int32),
+        kept_positions=np.asarray([], dtype=np.int64),
+        valid_len=10,
+    )
+
+    assert segments.shape == (0, 2)
+    assert labels.shape == (0,)
+    assert loader._last_selected_axis_gt_input_count == 1
+    assert loader._last_selected_axis_gt_drop_count == 1
+
+
 def test_loadframes_selected_axis_gt_drop_allows_explicit_legacy_opt_in():
     import numpy as np
 
@@ -248,6 +286,24 @@ def test_fail_closed_config_scanner_rejects_v2_soft_fallback_dense_claim():
                     type="IrregularActionFormerHeadV2",
                     soft_assign_topk=9,
                     allow_center_fallback_inside_gt=True,
+                    route_contract=dict(dense_equivalent_claim_allowed=True),
+                )
+            )
+        )
+    )
+
+    assert any("dense-equivalent claim" in item["reason"] for item in violations)
+
+
+@pytest.mark.parametrize("head_type", ["IrregularActionFormerHeadV2", "IrregularActionFormerHeadV3"])
+def test_fail_closed_config_scanner_treats_v2_v3_as_soft_route_by_default(head_type):
+    scanner = load_module("tools/check_fail_closed_config.py", f"strict_scanner_default_soft_{head_type}")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type=head_type,
                     route_contract=dict(dense_equivalent_claim_allowed=True),
                 )
             )

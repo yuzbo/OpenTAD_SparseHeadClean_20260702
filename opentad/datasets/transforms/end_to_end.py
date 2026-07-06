@@ -693,10 +693,34 @@ class LoadFrames:
 
     def _remap_gt_to_selected_axis(self, gt_segments, gt_labels, kept_positions, valid_len):
         self._clear_selected_axis_gt_drop_state()
-        if gt_segments is None or gt_labels is None or len(gt_segments) == 0 or kept_positions.size == 0:
+        if gt_segments is None or gt_labels is None or len(gt_segments) == 0:
             return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
 
         self._last_selected_axis_gt_input_count = int(len(gt_segments))
+        if kept_positions.size == 0:
+            self._last_selected_axis_gt_drop_count = int(len(gt_segments))
+            self._last_selected_axis_gt_keep_count = 0
+            self._last_dropped_selected_axis_gt_segments = [
+                dict(
+                    index=int(idx),
+                    label=int(gt_labels[idx]),
+                    original_segment=[float(seg[0]), float(seg[1])],
+                    mapped_segment=[0.0, 0.0],
+                )
+                for idx, seg in enumerate(gt_segments)
+            ]
+            if not bool(getattr(self, "allow_drop_selected_axis_gt", False)):
+                video_name = getattr(self, "_current_video_name", "unknown")
+                raise ValueError(
+                    "selected-axis GT remap dropped/collapsed ground truth for "
+                    f"video={video_name}: dropped={self._last_selected_axis_gt_drop_count}, "
+                    f"kept={self._last_selected_axis_gt_keep_count}, "
+                    f"input={self._last_selected_axis_gt_input_count}, "
+                    f"valid_len={valid_len}, kept_positions={int(kept_positions.size)}. "
+                    "Set allow_drop_selected_axis_gt=True only for legacy/diagnostic routes."
+                )
+            return np.zeros((0, 2), dtype=np.float32), np.zeros((0,), dtype=np.int32)
+
         remapped_segments = []
         remapped_labels = []
         max_coord = float(kept_positions.size)

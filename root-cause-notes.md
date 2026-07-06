@@ -374,3 +374,28 @@ Reference snapshot:
   - If dense selected-axis passes but bridge selected-axis collapses, first suspect bridge encode/decode scale, point layout, or target contract.
   - If bridge selected-axis passes but native bridge collapses, first suspect selected-to-native conversion, native temporal grid cell geometry, NMS axis, or duration clipping.
   - If bridge selected/native pass but HeadV3 remains near `40.20`, first suspect V2/V3 soft assignment, missing-center fallback, log1p regression, geometry modulation, and boundary auxiliary mixing.
+
+## Pro Review WARN on Fail-Closed SHA 578fe0d - 2026-07-06
+
+- Full response recorded verbatim in `pro-review-fail-closed-warn-578fe0d-20260706.md`.
+- Source attachment SHA256: `53315A676A9937A16F3FBD325963FE119AEDEEBAB1EC2BCE0AD323BF743537B9`.
+- Reviewed commit: `578fe0dd827fd7fb3d2aabcfb5b9c922c4dfcd67` (`Harden sparse route fail-closed contracts`).
+- Verdict absorbed as **WARN for fail-closed hardening**, not as dense-equivalent approval:
+  - Patch A/B/C/D/E are mostly implemented and materially reduce fail-open routes.
+  - The code hardening is close to sufficient as a guarded diagnostic baseline.
+  - It still cannot support a dense-equivalent claim or final root-cause claim for the `65/63 -> 40/42` collapse.
+- Remaining code-level concerns to verify/fix:
+  - `selected_axis_to_dense_axis(..., strict=False)` remains backward-compatible; add lint/test coverage so sparse/irregular paths never call it without `strict=True`.
+  - `check_fail_closed_config.py` should treat all `IrregularActionFormerHeadV2/V3` configs as soft/weighted by default, even when `soft_assign_topk` is omitted, unless a future audited hard-compatible flag exists.
+  - `LoadFrames` should fail closed for non-empty GT with empty selected positions, rather than relying on normal sampling to avoid the case.
+  - Add runner coverage tests: every train/eval/audit shell entry must call `tools/check_fail_closed_config.py` before execution.
+  - Consider moving the fail-closed scanner into the common `tools/train.py` / eval runtime path, not only remote runner scripts.
+- Required experiment gates remain unchanged:
+  - Stage 0: Linux preflight on exact SHA `578fe0d`, including scanner, pytest, `bash -n`, and runner-gate coverage.
+  - Stage 1: same-batch assignment audit with native/selected batches separated and per-sample hashes recorded.
+  - Stage 2: official/dense selected-axis sanity must recover random-fixed near `63` and uniform near `65`.
+  - Stage 3: bridge selected/native controls only after Stage 2 passes.
+  - Stage 4: HeadV2/V3 soft/log1p/geometry decomposition only after bridge/dense contracts are clean.
+- Claim boundary:
+  - Allowed: fail-closed protection has been strengthened and review risks are now narrower.
+  - Forbidden: claiming HeadV3/bridge openrange is official-compatible, claiming sparse selection naturally explains `40/42`, or writing paper-level mAP conclusions before Stage 0-4 evidence.
