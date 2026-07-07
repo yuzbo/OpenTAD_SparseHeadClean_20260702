@@ -11,11 +11,13 @@ RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-current_models_$(date +%Y%m%d_%H%M%S)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 DENSE_LOG_DIR="$ROOT/logs/slurm_stage2_dense_selected_axis_long"
+EXACT0410_LOG_DIR="$ROOT/logs/slurm_0410_exact_dense"
 SPARSE_LOG_DIR="$ROOT/logs/slurm_sparse_diag_20260707"
 DENSE_BODY="$ROOT/remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.sh"
+EXACT0410_BODY="$ROOT/remote_runs/sbatch_0410_exact_dense_train_20260708.sh"
 SPARSE_BODY="$ROOT/remote_runs/sbatch_sparse_diag_train_20260707.sh"
 
-mkdir -p "$DENSE_LOG_DIR" "$SPARSE_LOG_DIR"
+mkdir -p "$DENSE_LOG_DIR" "$EXACT0410_LOG_DIR" "$SPARSE_LOG_DIR"
 if [[ -f "$BASE/conda_envs/opentad/bin/activate" ]]; then
   # Config.fromfile requires the OpenTAD Python environment even before sbatch.
   source "$BASE/conda_envs/opentad/bin/activate"
@@ -48,6 +50,10 @@ submit_one() {
   local body log_dir run_tag run_dir
 
   case "$family" in
+    exact0410)
+      body="$EXACT0410_BODY"
+      log_dir="$EXACT0410_LOG_DIR"
+      ;;
     dense)
       body="$DENSE_BODY"
       log_dir="$DENSE_LOG_DIR"
@@ -89,6 +95,14 @@ echo "Policy skips:"
 echo "  - sparse_selected_axis_bridge_absx: selected-axis GT remap fail-closed already triggered; do not resubmit unchanged."
 echo "  - levelstride/radiuslevel: same-batch audit says positives/coverage are too weak for long training."
 echo "  - legacy bridge hard/openrange/log/soft/densepass: compatibility=legacy_ablation_only."
+echo "Dense baseline policy:"
+echo "  - exact0410_* are the only current 0410 random/uniform dense-baseline reproduction jobs."
+echo "  - near63/near65 selected-axis dense-control jobs are current-route sanity checks, not exact 0410 baselines."
+
+submit_one exact0410 "exact0410_random_fixed_dense63" \
+  "configs/adatad/thumos/input_random_fixed_50pct_0410_exact_n16r4.py" "$EXP_ID"
+submit_one exact0410 "exact0410_stride2_uniform_dense65" \
+  "configs/adatad/thumos/input_stride2_uniform_0410_exact_n16r4.py" "$EXP_ID"
 
 submit_one dense "near63_random_fixed_selected_axis_dense_control" \
   "configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py" "$EXP_ID"

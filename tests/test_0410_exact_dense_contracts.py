@@ -110,6 +110,9 @@ def test_current_near63_near65_controls_are_explicitly_not_0410_exact_dense():
 def test_0410_exact_dense_slurm_scripts_are_separate_from_selected_axis_dense_runner():
     sbatch_body = (ROOT / "remote_runs/sbatch_0410_exact_dense_train_20260708.sh").read_text(encoding="utf-8")
     submitter = (ROOT / "remote_runs/submit_0410_exact_dense_slurm_20260708.sh").read_text(encoding="utf-8")
+    current_submitter = (ROOT / "remote_runs/submit_current_implemented_models_slurm_20260708.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "input_random_fixed_50pct_0410_exact_n16r4.py" in submitter
     assert "input_stride2_uniform_0410_exact_n16r4.py" in submitter
@@ -128,3 +131,8 @@ def test_0410_exact_dense_slurm_scripts_are_separate_from_selected_axis_dense_ru
     assert "IrregularActionFormer" not in sbatch_body
     assert "srun --jobid=1118197" not in sbatch_body
     assert "CUDA_VISIBLE_DEVICES=1" not in sbatch_body
+
+    assert "EXACT0410_BODY" in current_submitter
+    assert "submit_one exact0410 \"exact0410_random_fixed_dense63\"" in current_submitter
+    assert "submit_one exact0410 \"exact0410_stride2_uniform_dense65\"" in current_submitter
+    assert "not exact 0410 baselines" in current_submitter
