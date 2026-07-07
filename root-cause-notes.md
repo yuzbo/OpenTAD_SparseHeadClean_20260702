@@ -596,3 +596,15 @@ Reference snapshot:
   - `pytest tests/test_fail_closed_static_gates.py tests/test_paper_diagnostics_tools.py tests/test_audit_sparse_head_assignment_contracts.py -q` passed (`24 passed`).
   - `pytest tests/test_adapter_native_dense_headv2_contracts.py -q` passed (`65 passed, 25 skipped`).
   - Active sparse/dense diagnostic configs passed `tools/check_fail_closed_config.py` with no violations.
+
+## Exact 0410 Dense-Control Correction - 2026-07-08
+
+- The current `near63_random_fixed_selected_axis_dense_control` and `near65_uniform_even_spacing_official_dense` jobs are **not exact 0410 dense reproductions**. They use `IrregularActionFormer` with `DensePassthroughConv1DTransformerProj` / `DensePassthroughFPNIdentity`, selected-axis metadata, batch size 8, and the current adapter-route post-processing contract.
+- This is a comparison/protocol error, not evidence that the official dense detector itself collapses under 50% input sampling.
+- Added exact 0410 dense controls:
+  - `configs/adatad/thumos/input_random_fixed_50pct_0410_exact_n16r4.py`: pure `ActionFormer + Conv1DTransformerProj + FPNIdentity + ActionFormerHead`, random-fixed 50%, selected-axis GT remap/back-map, 0410 frozen dense training protocol.
+  - `configs/adatad/thumos/input_stride2_uniform_0410_exact_n16r4.py`: pure `ActionFormer + Conv1DTransformerProj + FPNIdentity + ActionFormerHead`, dataset-level `sample_stride=2`, no `uniform_fixed_subsample`, no selected-axis remap metadata.
+- Added Slurm runner `remote_runs/sbatch_0410_exact_dense_train_20260708.sh` and submitter `remote_runs/submit_0410_exact_dense_slurm_20260708.sh` so these controls do not reuse the selected-axis dense-control runner.
+- Interpretation gate:
+  - If exact controls recover roughly `63/65`, the 40/42 drop is localized to the irregular detector/protocol/head route.
+  - If exact controls also collapse, the next culprit shifts to N16R4 data/pretrain/runtime or a regression in shared dense code.
