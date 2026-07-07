@@ -610,3 +610,12 @@ Reference snapshot:
 - Interpretation gate:
   - If exact controls recover roughly `63/65`, the 40/42 drop is localized to the irregular detector/protocol/head route.
   - If exact controls also collapse, the next culprit shifts to N16R4 data/pretrain/runtime or a regression in shared dense code.
+
+## Protocol Bridge Isolation - 2026-07-08
+
+- Remote evidence while the exact 0410 baselines are still running: current-route selected-axis dense controls reached only `42.91` (random fixed, epoch 47 validation) and `45.17` (uniform fixed, epoch 47 validation), while sparse uniform bridge reached `36.84`; this means the degradation cannot be attributed only to HeadV2/V3 supervision.
+- Added three bridge controls to split the mixed variable:
+  - `input_random_fixed_50pct_0410_exact_irregular_densepass_n16r4.py`: exact 0410 random-fixed data/frozen-backbone/training/postprocess protocol, but routed through `IrregularActionFormer + DensePassthroughConv1DTransformerProj + DensePassthroughFPNIdentity + ActionFormerHead`. This tests whether the detector/projection/neck/postprocess wrapper alone changes the exact random baseline.
+  - `input_random_fixed_50pct_adapter_actionformer_selected_axis_bs8_n16r4.py`: current adapter random-fixed selected-axis protocol, but pure `ActionFormer + Conv1DTransformerProj + FPNIdentity + ActionFormerHead`. This tests whether the current adapter/training/data protocol is already low before the irregular wrapper.
+  - `input_uniform_fixed_50pct_adapter_actionformer_selected_axis_bs8_n16r4.py`: current adapter uniform-fixed selected-axis protocol, pure ActionFormer, to compare against the low current-route near65 sanity job.
+- Added `remote_runs/sbatch_protocol_bridge_train_20260708.sh` and `remote_runs/submit_protocol_bridge_slurm_20260708.sh`. These jobs are diagnostic isolation runs, not dense-equivalent claims; they run as separate Slurm jobs and refuse allocation `1118197` / node `g0030`.
