@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${ROOT:-/data/run01/sczc063/yuzibo/OpenTAD_SparseHeadClean_20260702}"
+BASE="${BASE:-/data/run01/sczc063/yuzibo}"
+ROOT="${ROOT:-$BASE/OpenTAD_SparseHeadClean_20260702}"
 EXCLUDE_NODE="${EXCLUDE_NODE:-g0030}"
 PARTITION="${SLURM_PARTITION:-gpu}"
 GPUS="${SLURM_GPUS:-1}"
 EXP_ID="${EXP_ID:-0}"
 RUN_TAG_PREFIX="${RUN_TAG_PREFIX:-current_models_$(date +%Y%m%d_%H%M%S)}"
+PYTHON_BIN="${PYTHON_BIN:-python}"
 
 DENSE_LOG_DIR="$ROOT/logs/slurm_stage2_dense_selected_axis_long"
 SPARSE_LOG_DIR="$ROOT/logs/slurm_sparse_diag_20260707"
@@ -14,18 +16,22 @@ DENSE_BODY="$ROOT/remote_runs/sbatch_stage2_dense_selected_axis_train_20260706.s
 SPARSE_BODY="$ROOT/remote_runs/sbatch_sparse_diag_train_20260707.sh"
 
 mkdir -p "$DENSE_LOG_DIR" "$SPARSE_LOG_DIR"
+if [[ -f "$BASE/conda_envs/opentad/bin/activate" ]]; then
+  # Config.fromfile requires the OpenTAD Python environment even before sbatch.
+  source "$BASE/conda_envs/opentad/bin/activate"
+fi
 cd "$ROOT"
 
 run_dir_for() {
   local cfg="$1"
   local exp_id="$2"
-  python - "$cfg" "$exp_id" <<'PY'
+  "$PYTHON_BIN" - "$cfg" "$exp_id" <<'PY'
 import os
 import sys
 from mmengine.config import Config
 
 cfg = Config.fromfile(sys.argv[1])
-print(os.path.join(cfg.work_dir, f"gpu1_id{int(sys.argv[2])}"))
+print(os.path.join(cfg.work_dir, "gpu1_id%d" % int(sys.argv[2])))
 PY
 }
 
