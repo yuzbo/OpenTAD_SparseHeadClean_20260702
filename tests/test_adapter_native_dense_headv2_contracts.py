@@ -318,6 +318,13 @@ def test_adapter_sparse_bridge_dense_like_configs_cover_assignment_and_regressio
         assert float(head.center_sample_radius) == 1.5
         assert "adapter_irregular_bridge" in cfg.work_dir
         assert "n16r4" in cfg.work_dir
+        assert head.route_contract.gt_axis == "native"
+        assert head.route_contract.proposal_axis == "native"
+        assert head.route_contract.nms_axis == "native"
+        assert head.route_contract.postprocess_axis == "native"
+        assert head.route_contract.eval_axis == "seconds"
+        assert bool(head.route_contract.diagnostic_only)
+        assert not bool(head.route_contract.primary_result_allowed)
 
     assert hard_linear.model.rpn_head.assignment_mode == "hard"
     assert hard_linear.model.rpn_head.regression_mode == "symmetric_linear"
@@ -448,9 +455,20 @@ def test_bridge_corrected_derivative_configs_clear_legacy_scale_opt_in():
         assert head.allow_center_fallback_inside_gt is False
 
     assert shortgate.model.rpn_head.route_contract.compatibility == "irregular_geometry_diagnostic_candidate"
+    assert shortgate.model.rpn_head.route_contract.nms_axis == "native"
+    assert shortgate.model.rpn_head.route_contract.eval_axis == "seconds"
+    assert bool(shortgate.model.rpn_head.route_contract.diagnostic_only)
+    assert not bool(shortgate.model.rpn_head.route_contract.primary_result_allowed)
     assert getattr(shortgate.model.rpn_head.prior_generator, "dense_compat_mode", None) is None
     assert selected_axis.model.neck.type == "IrregularFPNDenseAdapter"
     assert selected_axis.model.rpn_head.route_contract.compatibility == "dense_compatible_diagnostic_candidate"
+    assert selected_axis.model.rpn_head.route_contract.gt_axis == "selected"
+    assert selected_axis.model.rpn_head.route_contract.proposal_axis == "selected"
+    assert selected_axis.model.rpn_head.route_contract.nms_axis == "native"
+    assert selected_axis.model.rpn_head.route_contract.postprocess_axis == "native"
+    assert selected_axis.model.rpn_head.route_contract.eval_axis == "seconds"
+    assert bool(selected_axis.model.rpn_head.route_contract.diagnostic_only)
+    assert not bool(selected_axis.model.rpn_head.route_contract.primary_result_allowed)
     assert selected_axis.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer"
 
 
@@ -776,6 +794,13 @@ def test_selected_axis_random_uniform_control_matrix_contracts():
         if name == "random_bridge_selected_absrange_expanded":
             assert cfg.model.neck.type == "IrregularFPNDenseAdapter", name
             assert cfg.model.rpn_head.route_contract.compatibility == "dense_compatible_diagnostic_candidate", name
+            assert cfg.model.rpn_head.route_contract.gt_axis == "selected", name
+            assert cfg.model.rpn_head.route_contract.proposal_axis == "selected", name
+            assert cfg.model.rpn_head.route_contract.nms_axis == "native", name
+            assert cfg.model.rpn_head.route_contract.postprocess_axis == "native", name
+            assert cfg.model.rpn_head.route_contract.eval_axis == "seconds", name
+            assert bool(cfg.model.rpn_head.route_contract.diagnostic_only), name
+            assert not bool(cfg.model.rpn_head.route_contract.primary_result_allowed), name
             assert cfg.model.rpn_head.prior_generator.dense_compat_mode == "official_actionformer", name
 
         assert steps["train"].method_base == "random_trunc", name
@@ -1343,11 +1368,18 @@ def test_loadframes_allows_diagnostic_research_switches_outside_eval_splits(spli
 
 
 def test_current_configs_do_not_enable_bata_diagnostic_eval_shortcuts():
+    mmengine_config = pytest.importorskip("mmengine.config")
     for config_path in (ROOT / "configs").rglob("*.py"):
-        text = config_path.read_text(encoding="utf-8")
-        assert "bata_allow_diagnostic_gt_cache=True" not in text
-        assert "bata_diagnostic_only=True" not in text
-        assert "diagnostic_only=True" not in text
+        cfg = mmengine_config.Config.fromfile(str(config_path))
+        dataset = cfg.get("dataset", {})
+        for split in ("train", "val", "test"):
+            split_cfg = dataset.get(split, {})
+            for step in split_cfg.get("pipeline", []):
+                if step.get("type") != "LoadFrames":
+                    continue
+                assert not bool(step.get("bata_allow_diagnostic_gt_cache", False)), config_path
+                assert not bool(step.get("bata_diagnostic_only", False)), config_path
+                assert not bool(step.get("diagnostic_only", False)), config_path
 
 
 def test_fail_closed_config_scanner_allows_disabled_shortcuts(tmp_path):
@@ -1413,6 +1445,13 @@ def test_fail_closed_config_scanner_rejects_dense_claim_with_legacy_bridge_flags
                         dense_equivalent_claim_allowed=True,
                         allow_legacy_full_cell_span=True,
                         allow_center_fallback_inside_gt=True,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=True,
+                        primary_result_allowed=False,
                     ),
                 )
             )
@@ -1437,6 +1476,13 @@ def test_fail_closed_config_scanner_rejects_route_contract_contradictions():
                         dense_equivalent_claim_allowed=False,
                         allow_legacy_full_cell_span=False,
                         allow_center_fallback_inside_gt=False,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=True,
+                        primary_result_allowed=False,
                     ),
                 )
             )
@@ -1466,6 +1512,13 @@ def test_fail_closed_config_scanner_rejects_official_dense_prior_without_dense_r
                         dense_equivalent_claim_allowed=False,
                         allow_legacy_full_cell_span=False,
                         allow_center_fallback_inside_gt=False,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=True,
+                        primary_result_allowed=False,
                     ),
                 ),
             )
@@ -1492,6 +1545,13 @@ def test_fail_closed_config_scanner_allows_official_dense_prior_with_dense_adapt
                         dense_equivalent_claim_allowed=False,
                         allow_legacy_full_cell_span=False,
                         allow_center_fallback_inside_gt=False,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=True,
+                        primary_result_allowed=False,
                     ),
                 ),
             )
@@ -1518,6 +1578,13 @@ def test_fail_closed_config_scanner_rejects_dense_compat_label_without_official_
                         dense_equivalent_claim_allowed=False,
                         allow_legacy_full_cell_span=False,
                         allow_center_fallback_inside_gt=False,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=True,
+                        primary_result_allowed=False,
                     ),
                 ),
             )
@@ -1525,6 +1592,97 @@ def test_fail_closed_config_scanner_rejects_dense_compat_label_without_official_
     )
 
     assert any("irregular_geometry_diagnostic_candidate" in item["reason"] for item in violations)
+
+
+def test_fail_closed_config_scanner_rejects_incomplete_route_contract_axis_schema():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_missing_route_schema")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    route_contract=dict(
+                        compatibility="irregular_geometry_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                    ),
+                )
+            )
+        )
+    )
+    paths = {item["path"] for item in violations}
+
+    assert "cfg.model.rpn_head.route_contract.gt_axis" in paths
+    assert "cfg.model.rpn_head.route_contract.nms_axis" in paths
+    assert "cfg.model.rpn_head.route_contract.eval_axis" in paths
+    assert "cfg.model.rpn_head.route_contract.diagnostic_only" in paths
+    assert "cfg.model.rpn_head.route_contract.primary_result_allowed" in paths
+
+
+def test_fail_closed_config_scanner_rejects_selected_axis_nms_as_primary_result():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_selected_nms_primary")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    route_contract=dict(
+                        compatibility="dense_compatible_diagnostic_candidate",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=False,
+                        allow_center_fallback_inside_gt=False,
+                        gt_axis="selected",
+                        proposal_axis="selected",
+                        nms_axis="selected",
+                        postprocess_axis="selected",
+                        eval_axis="seconds",
+                        diagnostic_only=False,
+                        primary_result_allowed=True,
+                    ),
+                )
+            )
+        )
+    )
+
+    assert any("selected-axis NMS" in item["reason"] for item in violations)
+
+
+def test_fail_closed_config_scanner_rejects_legacy_route_as_primary_result():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_legacy_primary")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=True,
+                    allow_center_fallback_inside_gt=True,
+                    route_contract=dict(
+                        compatibility="legacy_ablation_only",
+                        dense_equivalent_claim_allowed=False,
+                        allow_legacy_full_cell_span=True,
+                        allow_center_fallback_inside_gt=True,
+                        gt_axis="native",
+                        proposal_axis="native",
+                        nms_axis="native",
+                        postprocess_axis="native",
+                        eval_axis="seconds",
+                        diagnostic_only=False,
+                        primary_result_allowed=True,
+                    ),
+                )
+            )
+        )
+    )
+
+    assert any("legacy route must remain diagnostic-only" in item["reason"] for item in violations)
 
 
 def test_fail_closed_config_scanner_expands_shell_literal_globs(tmp_path):
@@ -1797,6 +1955,163 @@ def test_irregular_actionformer_selected_axis_post_processing_nms_uses_native_ax
     assert results["video_selected_axis"] == [
         dict(segment=[17.5, 52.5], label="action", score=0.9)
     ]
+
+
+def test_single_stage_selected_axis_post_processing_nms_uses_native_axis_on_linux(monkeypatch):
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.single_stage")
+
+    captured = {}
+
+    def fake_batched_nms(segments, scores, labels, **kwargs):
+        captured["segments"] = segments.clone()
+        captured["scores"] = scores.clone()
+        captured["labels"] = labels.clone()
+        return segments, scores, labels
+
+    monkeypatch.setattr(detector, "batched_nms", fake_batched_nms)
+    monkeypatch.setattr(detector, "apply_visibility_rescore", lambda scores, segments, meta, cfg: scores)
+    model = object.__new__(detector.SingleStageDetector)
+    meta = dict(
+        video_name="video_single_stage_selected_axis",
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=6.0,
+        window_start_frame=12.0,
+        duration=120.0,
+        irregular_selected_positions=[3.0, 8.0, 18.0, 33.0],
+        irregular_selected_valid_len=48.0,
+        irregular_native_axis=False,
+        irregular_gt_axis="selected",
+        irregular_proposal_axis="selected",
+        irregular_postprocess_axis="native",
+    )
+    expected_native = torch.tensor([[4.25, 21.75], [4.25, 21.75]], dtype=torch.float32)
+
+    results = model.post_processing(
+        predictions=(
+            [torch.tensor([[0.25, 2.25]], dtype=torch.float32)],
+            [torch.tensor([[0.9, 0.1]], dtype=torch.float32)],
+        ),
+        metas=[meta],
+        post_cfg=SimpleNamespace(
+            pre_nms_thresh=0.001,
+            pre_nms_topk=2000,
+            sliding_window=False,
+            nms={},
+        ),
+        ext_cls=["action_a", "action_b"],
+    )
+
+    assert torch.allclose(captured["segments"], expected_native)
+    assert results["video_single_stage_selected_axis"] == [
+        dict(segment=[17.5, 52.5], label="action_a", score=0.9),
+        dict(segment=[17.5, 52.5], label="action_b", score=0.1),
+    ]
+
+
+def test_single_stage_rejects_selected_axis_nms_without_opt_in_on_linux(monkeypatch):
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.single_stage")
+
+    called = {"nms": False}
+
+    def fake_batched_nms(segments, scores, labels, **kwargs):
+        called["nms"] = True
+        return segments, scores, labels
+
+    monkeypatch.setattr(detector, "batched_nms", fake_batched_nms)
+    monkeypatch.setattr(detector, "apply_visibility_rescore", lambda scores, segments, meta, cfg: scores)
+    model = object.__new__(detector.SingleStageDetector)
+    meta = dict(
+        video_name="video_single_stage_selected_axis_rejected",
+        fps=1.0,
+        snippet_stride=1.0,
+        offset_frames=0.0,
+        window_start_frame=0.0,
+        duration=10.0,
+        irregular_selected_positions=[0.0, 2.0],
+        irregular_selected_valid_len=4.0,
+        irregular_native_axis=False,
+        irregular_gt_axis="selected",
+        irregular_proposal_axis="selected",
+        irregular_postprocess_axis="selected",
+    )
+
+    with pytest.raises(ValueError, match="selected-axis post-processing/NMS"):
+        model.post_processing(
+            predictions=(
+                [torch.tensor([[0.0, 1.0]], dtype=torch.float32)],
+                [torch.tensor([[0.9]], dtype=torch.float32)],
+            ),
+            metas=[meta],
+            post_cfg=SimpleNamespace(
+                pre_nms_thresh=0.001,
+                pre_nms_topk=2000,
+                sliding_window=False,
+                nms={},
+            ),
+            ext_cls=["action"],
+        )
+    assert called["nms"] is False
+
+
+def test_single_stage_legacy_native_post_processing_without_axis_meta_on_linux(monkeypatch):
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.single_stage")
+
+    monkeypatch.setattr(detector, "apply_visibility_rescore", lambda scores, segments, meta, cfg: scores)
+    model = object.__new__(detector.SingleStageDetector)
+    meta = dict(
+        video_name="video_single_stage_legacy_native",
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=6.0,
+        window_start_frame=12.0,
+        duration=120.0,
+    )
+
+    results = model.post_processing(
+        predictions=(
+            [torch.tensor([[4.25, 21.75]], dtype=torch.float32)],
+            [torch.tensor([[0.9]], dtype=torch.float32)],
+        ),
+        metas=[meta],
+        post_cfg=SimpleNamespace(
+            pre_nms_thresh=0.001,
+            pre_nms_topk=2000,
+            sliding_window=True,
+            nms=None,
+        ),
+        ext_cls=["action"],
+    )
+
+    assert results["video_single_stage_legacy_native"] == [
+        dict(segment=[17.5, 52.5], label="action", score=0.9)
+    ]
+
+
+def test_irregular_actionformer_segments_to_seconds_supports_native_axis_on_linux():
+    torch = import_torch_or_skip()
+    detector = pytest.importorskip("opentad.models.detectors.irregular_actionformer")
+
+    model = object.__new__(detector.IrregularActionFormer)
+    meta = dict(
+        fps=2.0,
+        snippet_stride=4.0,
+        offset_frames=6.0,
+        window_start_frame=12.0,
+        duration=120.0,
+        irregular_native_axis=True,
+        irregular_gt_axis="native",
+        irregular_proposal_axis="native",
+        irregular_postprocess_axis="native",
+    )
+    segments = torch.tensor([[4.25, 21.75]], dtype=torch.float32)
+
+    seconds = model._segments_to_seconds(segments.clone(), meta, source_axis="native")
+
+    assert torch.allclose(seconds, torch.tensor([[17.5, 52.5]], dtype=torch.float32))
 
 
 def test_irregular_actionformer_single_class_post_processing_applies_pre_nms_filter_on_linux(monkeypatch):

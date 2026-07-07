@@ -1,7 +1,7 @@
 import torch
 from ..builder import DETECTORS, build_backbone, build_projection, build_head, build_neck
 from .base import BaseDetector
-from ..utils.post_processing import apply_visibility_rescore, batched_nms, convert_to_seconds
+from ..utils.post_processing import apply_visibility_rescore, batched_nms, convert_to_seconds, selected_axis_to_dense_axis
 
 
 @DETECTORS.register_module()
@@ -44,6 +44,61 @@ class SingleStageDetector(BaseDetector):
     def with_rpn_head(self):
         """bool: whether the detector has localization head"""
         return hasattr(self, "rpn_head") and self.rpn_head is not None
+
+    def _has_axis_contract(self, meta):
+        axis_keys = (
+            "irregular_axis_contract",
+            "irregular_gt_axis",
+            "irregular_proposal_axis",
+            "irregular_postprocess_axis",
+            "irregular_native_axis",
+            "irregular_selected_positions",
+            "irregular_selected_valid_len",
+        )
+        return any(key in meta for key in axis_keys)
+
+    def _postprocess_axes_from_meta(self, meta):
+        if not self._has_axis_contract(meta):
+            return "native", "native"
+
+        contract = meta.get("irregular_axis_contract", {}) or {}
+        default_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
+        proposal_axis = meta.get("irregular_proposal_axis", contract.get("proposal_axis", default_axis))
+        postprocess_axis = meta.get("irregular_postprocess_axis", contract.get("postprocess_axis", proposal_axis))
+        allowed = {"native", "selected"}
+        if proposal_axis not in allowed or postprocess_axis not in allowed:
+            raise ValueError(
+                "SingleStageDetector axis contract has unsupported axes: "
+                f"proposal_axis={proposal_axis}, postprocess_axis={postprocess_axis}"
+            )
+        expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
+        if proposal_axis != expected_axis:
+            raise ValueError(
+                "SingleStageDetector axis contract mismatch: "
+                f"irregular_native_axis implies {expected_axis}, got proposal_axis={proposal_axis}"
+            )
+        if postprocess_axis != proposal_axis and not (proposal_axis == "selected" and postprocess_axis == "native"):
+            raise ValueError(
+                "SingleStageDetector axis contract mismatch: "
+                f"proposal_axis={proposal_axis}, postprocess_axis={postprocess_axis}"
+            )
+
+        allow_selected_postprocess = bool(
+            meta.get("allow_selected_axis_postprocess_nms", contract.get("allow_selected_axis_postprocess_nms", False))
+        )
+        if postprocess_axis == "selected" and not allow_selected_postprocess:
+            raise ValueError(
+                "SingleStageDetector refuses selected-axis post-processing/NMS without "
+                "allow_selected_axis_postprocess_nms=True."
+            )
+        return proposal_axis, postprocess_axis
+
+    def _segments_to_axis(self, segments, meta, source_axis, target_axis):
+        if source_axis == target_axis:
+            return segments
+        if source_axis == "selected" and target_axis == "native":
+            return selected_axis_to_dense_axis(segments, meta, strict=True)
+        raise ValueError(f"Unsupported SingleStageDetector proposal axis conversion: {source_axis} -> {target_axis}")
 
     def forward_train(self, inputs, masks, metas, gt_segments, gt_labels, **kwargs):
         losses = dict()
@@ -105,13 +160,15 @@ class SingleStageDetector(BaseDetector):
 
         results = {}
         for i in range(len(metas)):  # processing each video
+            meta = metas[i]
+            proposal_axis, postprocess_axis = self._postprocess_axes_from_meta(meta)
             segments = rpn_proposals[i].detach().cpu()  # [N,2]
             scores = rpn_scores[i].detach().cpu()  # [N,class]
-            scores = apply_visibility_rescore(scores, segments, metas[i], visibility_rescore_cfg)
+            scores = apply_visibility_rescore(scores, segments, meta, visibility_rescore_cfg)
 
             if num_classes == 1:
                 scores = scores.squeeze(-1)
-                labels = torch.zeros(scores.shape[0]).contiguous()
+                labels = torch.zeros(scores.shape[0], dtype=torch.long).contiguous()
             else:
                 pred_prob = scores.flatten()  # [N*class]
 
@@ -135,14 +192,17 @@ class SingleStageDetector(BaseDetector):
                 scores = pred_prob
                 labels = cls_idxs
 
+            segments = self._segments_to_axis(segments, meta, proposal_axis, postprocess_axis)
+
             # if not sliding window, do nms
             if post_cfg.sliding_window == False and post_cfg.nms is not None:
                 segments, scores, labels = batched_nms(segments, scores, labels, **post_cfg.nms)
 
-            video_id = metas[i]["video_name"]
+            video_id = meta["video_name"]
 
             # convert segments to seconds
-            segments = convert_to_seconds(segments, metas[i])
+            seconds_source_axis = postprocess_axis
+            segments = convert_to_seconds(segments, meta, source_axis=seconds_source_axis)
 
             # merge with external classifier
             if isinstance(ext_cls, list):  # own classification results

@@ -12,6 +12,13 @@ model = dict(
             dense_equivalent_claim_allowed=False,
             allow_legacy_full_cell_span=True,
             allow_center_fallback_inside_gt=True,
+            gt_axis="native",
+            proposal_axis="native",
+            nms_axis="native",
+            postprocess_axis="native",
+            eval_axis="seconds",
+            diagnostic_only=True,
+            primary_result_allowed=False,
         ),
         prior_generator=dict(
             regression_range=[

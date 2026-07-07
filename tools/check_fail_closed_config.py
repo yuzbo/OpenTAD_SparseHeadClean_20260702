@@ -34,6 +34,19 @@ DENSE_COMPAT_NECK_TYPES = {
     "IrregularFPNDenseAdapter",
     "IrregularFPNDenseAdapterNorm",
 }
+ROUTE_CONTRACT_REQUIRED_FIELDS = (
+    "compatibility",
+    "dense_equivalent_claim_allowed",
+    "gt_axis",
+    "proposal_axis",
+    "nms_axis",
+    "postprocess_axis",
+    "eval_axis",
+    "diagnostic_only",
+    "primary_result_allowed",
+)
+ROUTE_CONTRACT_AXIS_FIELDS = ("gt_axis", "proposal_axis", "nms_axis", "postprocess_axis")
+ROUTE_CONTRACT_AXES = {"native", "selected"}
 
 
 def _plain_value(value):
@@ -138,6 +151,105 @@ def _violation(path, key, value, reason):
     return {"path": f"{path}.{key}", "key": key, "value": repr(_plain_value(value)), "reason": reason}
 
 
+def _scan_route_contract_schema(contract, path):
+    violations = []
+    if not isinstance(contract, dict) or not contract:
+        return violations
+
+    for key in ROUTE_CONTRACT_REQUIRED_FIELDS:
+        if key not in contract:
+            violations.append(_violation(path, key, None, "route_contract must explicitly declare axis/eval/result status"))
+
+    for key in ROUTE_CONTRACT_AXIS_FIELDS:
+        value = _dict_get(contract, key)
+        if value is not None and value not in ROUTE_CONTRACT_AXES:
+            violations.append(_violation(path, key, value, "route_contract axis must be 'native' or 'selected'"))
+
+    eval_axis = _dict_get(contract, "eval_axis")
+    if eval_axis is not None and eval_axis != "seconds":
+        violations.append(_violation(path, "eval_axis", eval_axis, "route_contract eval_axis must be 'seconds'"))
+
+    gt_axis = _dict_get(contract, "gt_axis")
+    proposal_axis = _dict_get(contract, "proposal_axis")
+    nms_axis = _dict_get(contract, "nms_axis")
+    postprocess_axis = _dict_get(contract, "postprocess_axis")
+    if gt_axis in ROUTE_CONTRACT_AXES and proposal_axis in ROUTE_CONTRACT_AXES and gt_axis != proposal_axis:
+        violations.append(
+            _violation(
+                path,
+                "proposal_axis",
+                proposal_axis,
+                f"route_contract proposal_axis must match gt_axis before head decode, got gt_axis={gt_axis!r}",
+            )
+        )
+    if proposal_axis in ROUTE_CONTRACT_AXES and nms_axis in ROUTE_CONTRACT_AXES:
+        allowed_conversion = proposal_axis == nms_axis or (proposal_axis == "selected" and nms_axis == "native")
+        if not allowed_conversion:
+            violations.append(
+                _violation(
+                    path,
+                    "nms_axis",
+                    nms_axis,
+                    f"route_contract cannot convert proposal_axis={proposal_axis!r} to nms_axis={nms_axis!r}",
+                )
+            )
+    if nms_axis in ROUTE_CONTRACT_AXES and postprocess_axis in ROUTE_CONTRACT_AXES:
+        allowed_conversion = nms_axis == postprocess_axis or (nms_axis == "selected" and postprocess_axis == "native")
+        if not allowed_conversion:
+            violations.append(
+                _violation(
+                    path,
+                    "postprocess_axis",
+                    postprocess_axis,
+                    f"route_contract cannot convert nms_axis={nms_axis!r} to postprocess_axis={postprocess_axis!r}",
+                )
+            )
+
+    diagnostic_only = bool(_dict_get(contract, "diagnostic_only", False))
+    primary_result_allowed = bool(_dict_get(contract, "primary_result_allowed", False))
+    if diagnostic_only and primary_result_allowed:
+        violations.append(
+            _violation(
+                path,
+                "primary_result_allowed",
+                primary_result_allowed,
+                "route_contract cannot be both diagnostic_only and primary_result_allowed",
+            )
+        )
+
+    compatibility = _dict_get(contract, "compatibility")
+    if compatibility == LEGACY_COMPATIBILITY and (not diagnostic_only or primary_result_allowed):
+        violations.append(
+            _violation(
+                path,
+                "primary_result_allowed",
+                primary_result_allowed,
+                "legacy route must remain diagnostic-only and cannot be a primary result",
+            )
+        )
+    if nms_axis == "selected" and (not diagnostic_only or primary_result_allowed):
+        violations.append(
+            _violation(
+                path,
+                "nms_axis",
+                nms_axis,
+                "selected-axis NMS is diagnostic-only and cannot be a primary result",
+            )
+        )
+
+    dense_claim = bool(_dict_get(contract, "dense_equivalent_claim_allowed", False))
+    if dense_claim and diagnostic_only:
+        violations.append(
+            _violation(
+                path,
+                "dense_equivalent_claim_allowed",
+                dense_claim,
+                "dense-equivalent claims cannot be made from diagnostic-only route contracts",
+            )
+        )
+    return violations
+
+
 def scan_dense_compat_model_object(obj, path):
     obj = _plain_value(obj)
     if not isinstance(obj, dict) or "rpn_head" not in obj:
@@ -174,6 +286,7 @@ def scan_route_contract_object(obj, path):
     if _is_v2_v3_sparse_head(obj):
         contract = _dict_get(obj, "route_contract", {})
         contract = contract if isinstance(contract, dict) else {}
+        violations.extend(_scan_route_contract_schema(contract, f"{path}.route_contract"))
         dense_claim = bool(_dict_get(obj, "dense_equivalent_claim_allowed", False)) or bool(
             _dict_get(contract, "dense_equivalent_claim_allowed", False)
         )
@@ -242,6 +355,7 @@ def scan_route_contract_object(obj, path):
 
     if not contract:
         return violations
+    violations.extend(_scan_route_contract_schema(contract, f"{path}.route_contract"))
 
     contract_legacy_full = bool(_dict_get(contract, "allow_legacy_full_cell_span", False))
     contract_center_fallback = bool(_dict_get(contract, "allow_center_fallback_inside_gt", False))

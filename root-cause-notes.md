@@ -1,5 +1,5 @@
 ---
-updated: 2026-07-06
+updated: 2026-07-07
 status: active
 scope: HeadV3 performance-collapse root-cause hypotheses for the 50% fixed THUMOS adapter sparse-head route.
 out-of-scope: Raw logs, checkpoints, generated result archives, and historical wiki material.
@@ -504,3 +504,44 @@ Reference snapshot:
   - `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` now calls the gate with `--brief` while still writing the full JSON gate file.
 - Purpose: reduce manual parsing during half-hour monitoring and make the go/no-go state visible directly in Stage-4 logs.
 - Remote preflight on synced commit `df1d1c0` passed: full stage2 gate/static pytest and `RUN_TAG=stage4_gate_brief_preflight REQUIRE_RESULTS=0 bash remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh`. The Stage-4 log now prints the brief summary before the full JSON payload.
+
+## Pro Review P0 Postprocess-Axis FAIL - 2026-07-07
+
+- Full response recorded verbatim in `pro-review-p0-postprocess-axis-fail-ed7ee49-20260707.md`.
+- Source attachment SHA256: `33B65A57123D82078A4DD8ED7DA954035685C4F09520B3D76531E5CA127D0260`.
+- Reviewed fixed commit: `ed7ee49be0ceadb15d886e4f302d37bdf46bae20` (`Record Stage2 gate brief preflight`).
+- Verdict absorbed as **FAIL / HOLD**:
+  - Do not start new HeadV2/V3, native, or sparse-head claim-oriented long training.
+  - Do not claim dense equivalence.
+  - Stage-2 dense selected-axis sanity is still the right gate, but the review now requires P0 post-processing axis issues to be fixed or disproved before using Stage-2 long runs as evidence.
+- The review's central point is now part of the active root-cause tree: a local assignment audit can be correct while high-IoU mAP still collapses if proposal axis, NMS axis, seconds conversion, or duration clipping is wrong downstream. Therefore positive coverage and target decode IoU are necessary but not sufficient evidence.
+- Locally verified review items:
+  - **Confirmed P0, patched locally after the review:** `opentad/models/detectors/single_stage.py` called `convert_to_seconds(segments, metas[i])` without an explicit `source_axis`. The local patch now gives `SingleStageDetector` explicit `proposal_axis` / `postprocess_axis` handling, converts selected proposals to native before NMS, rejects selected-axis NMS unless explicitly allowed, and calls `convert_to_seconds(..., source_axis=seconds_source_axis)`.
+  - **Important scope correction:** the two current Stage-2 dense selected-axis sanity configs expand to `model.type="IrregularActionFormer"` with `rpn_head.type="ActionFormerHead"`, so this SingleStage bug is a real fail-closed gap but is not the direct runtime path for those two Stage-2 configs.
+  - **Reviewer concern narrowed:** the review says `IrregularActionFormer._segments_to_seconds()` does not support native axis. Current HEAD has `return convert_to_seconds(segments, meta, source_axis=source_axis, strict=True)`, so the native path is present through the generic return. A Linux behavior test was added to prove `source_axis="native"` converts correctly.
+  - **Still valid policy:** selected-axis NMS must remain diagnostic-only. Main evidence routes should use native or seconds coordinates for NMS and seconds coordinates for evaluation.
+- Newly active patch/audit queue:
+  1. Run the new SingleStage and IrregularActionFormer postprocess-axis behavior tests on Linux, because they are skipped on Windows when torch import is unavailable.
+  2. Extend the route-contract schema and scanner to include `nms_axis`, `eval_axis`, `compatibility`, `dense_equivalent_claim_allowed`, and primary/diagnostic result status across Stage-2, Stage-3, bridge, native, and HeadV2/V3 configs.
+  3. Add runtime/debug evidence that NMS receives native or seconds-compatible proposal coordinates for selected-axis dense and bridge controls.
+  4. Add real-dataloader Stage-1 audit that includes post-process axis, NMS-axis, seconds-conversion, valid-mask/padding, short-video, multi-GT, and multi-batch sample hashes.
+  5. Only after those gates pass, run Stage-2 dense selected-axis sanity; if uniform/equal 50% does not recover near `65` and random fixed selected-axis does not recover near `63`, focus on data/GT remap/axis/postprocess before touching HeadV3.
+
+### Local verification update - 2026-07-07
+
+- I do **not** fully accept the P0 review as written:
+  - Accepted: the SingleStage bare `convert_to_seconds(..., source_axis="auto")` risk was real for any selected-axis route that could fall through `SingleStageDetector`.
+  - Narrowed: the current Stage-2 dense selected-axis configs do not use `SingleStageDetector`; they use `IrregularActionFormer` with `ActionFormerHead`.
+  - Rejected as a current-code factual claim: `IrregularActionFormer._segments_to_seconds(..., source_axis="native")` is not missing; it routes through `convert_to_seconds(..., source_axis=source_axis, strict=True)`.
+- Local patch status:
+  - `SingleStageDetector` now treats `irregular_native_axis` as axis-contract metadata, derives proposal/postprocess axes explicitly, converts selected proposals to native before NMS, rejects selected-axis post-processing/NMS unless explicitly opted in, and passes an explicit seconds `source_axis`.
+  - `SingleStageDetector` single-class post-processing now creates integer labels (`dtype=torch.long`) so Linux runtime tests do not fail on `ext_cls[label.item()]`.
+  - `tools/check_fail_closed_config.py` now requires explicit route-contract fields for bridge/sparse route contracts: `gt_axis`, `proposal_axis`, `nms_axis`, `postprocess_axis`, `eval_axis`, `diagnostic_only`, and `primary_result_allowed`. It rejects selected-axis NMS as a primary result and keeps legacy bridge routes diagnostic-only.
+  - All current Bridge route configs now declare their axis/eval/result status. Legacy bridge variants (`hard_linear`, `hard_log`, `soft_topk1`, `openrange`, `absrange`, `densepass`) remain `legacy_ablation_only`, `diagnostic_only=True`, `primary_result_allowed=False`. Corrected native bridge candidates declare native NMS/eval seconds, also diagnostic-only. The selected-axis bridge control declares `gt/proposal=selected`, `nms/postprocess=native`, `eval=seconds`.
+- Verification run locally on Windows:
+  - `python tools/check_fail_closed_config.py "configs/adatad/thumos/*.py"` -> `ok: true`.
+  - Focused scanner/contract/static tests -> `17 passed, 3 skipped`; the skips are Linux/torch behavior tests that must still run on the remote Linux environment.
+- Remaining risks:
+  - Runtime evidence that selected-axis dense/bridge controls send native coordinates into NMS is still required.
+  - Eleven legacy detector families still have bare `convert_to_seconds(...)` calls. They are not Stage-2/Stage-3 current paths, so they are P2/P3 before reuse, not blockers for the immediate dense-selected/bridge audit route.
+  - Remote Linux preflight remains blocked until the cluster login permission issue is resolved.

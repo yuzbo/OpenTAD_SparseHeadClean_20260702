@@ -16,6 +16,14 @@ def _is_selected_axis_to_dense_axis_call(node):
     return False
 
 
+def _is_convert_to_seconds_call(node):
+    if isinstance(node.func, ast.Name):
+        return node.func.id == "convert_to_seconds"
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr == "convert_to_seconds"
+    return False
+
+
 def test_production_selected_axis_call_sites_pass_strict_true():
     source_paths = sorted((ROOT / "opentad/models").rglob("*.py")) + sorted((ROOT / "tools").rglob("*.py"))
 
@@ -34,6 +42,46 @@ def test_production_selected_axis_call_sites_pass_strict_true():
 
     assert calls, "production code should keep selected-axis conversion call coverage"
     assert offenders == []
+
+
+def test_axis_aware_detectors_pass_explicit_source_axis_to_convert_to_seconds():
+    source_paths = [
+        ROOT / "opentad/models/detectors/irregular_actionformer.py",
+        ROOT / "opentad/models/detectors/single_stage.py",
+    ]
+
+    calls = []
+    offenders = []
+    for source_path in source_paths:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not _is_convert_to_seconds_call(node):
+                continue
+            calls.append((source_path, node))
+            if not any(kw.arg == "source_axis" for kw in node.keywords):
+                offenders.append(f"{source_path.relative_to(ROOT)}:{node.lineno}")
+
+    assert calls, "axis-aware detectors should keep explicit seconds-conversion coverage"
+    assert offenders == []
+
+
+def test_single_stage_postprocessing_uses_explicit_axis_for_seconds_conversion():
+    detector = (ROOT / "opentad/models/detectors/single_stage.py").read_text(encoding="utf-8")
+
+    assert "convert_to_seconds(segments, metas[i])" not in detector
+    assert "source_axis=seconds_source_axis" in detector
+    assert 'proposal_axis = meta.get("irregular_proposal_axis"' in detector
+    assert 'postprocess_axis = meta.get("irregular_postprocess_axis"' in detector
+    assert 'expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"' in detector
+    assert "proposal_axis != expected_axis" in detector
+    assert "proposal_axis == \"selected\" and postprocess_axis == \"native\"" in detector
+
+
+def test_single_stage_single_class_labels_are_long_and_partial_axis_meta_is_contract():
+    detector = (ROOT / "opentad/models/detectors/single_stage.py").read_text(encoding="utf-8")
+
+    assert '"irregular_native_axis"' in detector
+    assert 'labels = torch.zeros(scores.shape[0], dtype=torch.long).contiguous()' in detector
 
 
 def test_remote_run_execution_scripts_gate_fail_closed_config_before_commands():
