@@ -91,6 +91,15 @@ exp_id = int(sys.argv[2])
 cfg = Config.fromfile(cfg_path)
 name = Path(cfg_path).name
 expected = {
+    "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py": {
+        "method": "random_fixed_subsample",
+        "remap": False,
+        "gt_axis": "native",
+        "proposal_axis": "native",
+        "nms_axis": "native",
+        "compatibility": "irregular_geometry_diagnostic_candidate",
+        "shortgate": False,
+    },
     "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py": {
         "method": "random_fixed_subsample",
         "remap": True,

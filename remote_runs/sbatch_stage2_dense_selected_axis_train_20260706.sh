@@ -90,6 +90,7 @@ exp_id = int(sys.argv[2])
 name = Path(sys.argv[1]).name
 expected_methods = {
     "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py": "random_fixed_subsample",
+    "input_uniform_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py": "uniform_fixed_subsample",
     "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py": "uniform_fixed_subsample",
 }
 assert name in expected_methods, name
