@@ -82,11 +82,11 @@ def test_same_batch_audit_rejects_mixed_native_and_selected_axis_configs():
     audit = load_audit_with_stubs("audit_contract_mixed_axis")
     native_cfg = cfg_with_loadframes(
         False,
-        {"gt_axis": "native", "proposal_axis": "native", "postprocess_axis": "native"},
+        {"gt_axis": "native", "proposal_axis": "native", "nms_axis": "native", "postprocess_axis": "native"},
     )
     selected_cfg = cfg_with_loadframes(
         True,
-        {"gt_axis": "selected", "proposal_axis": "selected", "postprocess_axis": "native"},
+        {"gt_axis": "selected", "proposal_axis": "selected", "nms_axis": "native", "postprocess_axis": "native"},
     )
 
     contracts = [
@@ -102,7 +102,7 @@ def test_same_batch_contract_rejects_route_expected_axis_that_disagrees_with_loa
     audit = load_audit_with_stubs("audit_contract_route_mismatch")
     cfg = cfg_with_loadframes(
         False,
-        {"gt_axis": "selected", "proposal_axis": "selected", "postprocess_axis": "native"},
+        {"gt_axis": "selected", "proposal_axis": "selected", "nms_axis": "native", "postprocess_axis": "native"},
     )
 
     with pytest.raises(ValueError, match="expected_axis_contract.*remap_gt_to_selected_axis"):
@@ -113,7 +113,7 @@ def test_same_batch_audit_rejects_sampled_batch_axis_that_disagrees_with_config_
     audit = load_audit_with_stubs("audit_contract_batch_mismatch")
     selected_cfg = cfg_with_loadframes(
         True,
-        {"gt_axis": "selected", "proposal_axis": "selected", "postprocess_axis": "native"},
+        {"gt_axis": "selected", "proposal_axis": "selected", "nms_axis": "native", "postprocess_axis": "native"},
     )
     contract = audit.same_batch_config_contract(selected_cfg, "train", "selected_cfg.py")
     native_batch = [
@@ -126,6 +126,7 @@ def test_same_batch_audit_rejects_sampled_batch_axis_that_disagrees_with_config_
                         "irregular_native_axis": True,
                         "irregular_gt_axis": "native",
                         "irregular_proposal_axis": "native",
+                        "irregular_nms_axis": "native",
                         "irregular_postprocess_axis": "native",
                     }
                 ]
@@ -147,6 +148,7 @@ def test_sample_fingerprint_records_stable_hashes_for_gt_selected_positions_and_
         "irregular_native_axis": False,
         "irregular_gt_axis": "selected",
         "irregular_proposal_axis": "selected",
+        "irregular_nms_axis": "native",
         "irregular_postprocess_axis": "native",
     }
     temporal_grid_list = [
@@ -165,7 +167,7 @@ def test_sample_fingerprint_records_stable_hashes_for_gt_selected_positions_and_
         gt_label=[4, 7],
         temporal_grid_list=temporal_grid_list,
         sample_idx=0,
-        axes={"gt_axis": "selected", "proposal_axis": "selected", "postprocess_axis": "native"},
+        axes={"gt_axis": "selected", "proposal_axis": "selected", "nms_axis": "native", "postprocess_axis": "native"},
     )
     repeat = audit.make_sample_fingerprint(
         meta=meta,
@@ -173,10 +175,11 @@ def test_sample_fingerprint_records_stable_hashes_for_gt_selected_positions_and_
         gt_label=[4, 7],
         temporal_grid_list=temporal_grid_list,
         sample_idx=0,
-        axes={"gt_axis": "selected", "proposal_axis": "selected", "postprocess_axis": "native"},
+        axes={"gt_axis": "selected", "proposal_axis": "selected", "nms_axis": "native", "postprocess_axis": "native"},
     )
 
     assert fingerprint["sha256"] == repeat["sha256"]
+    assert fingerprint["axis_contract"]["nms_axis"] == "native"
     assert fingerprint["gt"]["segments_sha256"]
     assert fingerprint["gt"]["labels_sha256"]
     assert fingerprint["selected_axis"]["positions_sha256"]

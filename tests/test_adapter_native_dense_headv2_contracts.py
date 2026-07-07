@@ -1623,6 +1623,26 @@ def test_fail_closed_config_scanner_rejects_incomplete_route_contract_axis_schem
     assert "cfg.model.rpn_head.route_contract.primary_result_allowed" in paths
 
 
+def test_fail_closed_config_scanner_rejects_bridge_missing_route_contract():
+    scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_missing_bridge_contract")
+
+    violations = scanner.scan_config_object(
+        dict(
+            model=dict(
+                rpn_head=dict(
+                    type="IrregularActionFormerBridgeHead",
+                    allow_legacy_full_cell_span=False,
+                    allow_center_fallback_inside_gt=False,
+                    prior_generator=dict(type="IrregularPointGeneratorV2"),
+                )
+            )
+        )
+    )
+
+    assert any(item["path"] == "cfg.model.rpn_head.route_contract" for item in violations)
+    assert any("route_contract" in item["reason"] for item in violations)
+
+
 def test_fail_closed_config_scanner_rejects_selected_axis_nms_as_primary_result():
     scanner = load_module("tools/check_fail_closed_config.py", "check_fail_closed_config_selected_nms_primary")
 
@@ -1848,26 +1868,34 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
         irregular_native_axis=True,
         irregular_gt_axis="native",
         irregular_proposal_axis="native",
+        irregular_nms_axis="native",
         irregular_postprocess_axis="native",
     )
     bad_meta = dict(
         irregular_native_axis=True,
         irregular_gt_axis="native",
         irregular_proposal_axis="selected",
+        irregular_nms_axis="selected",
         irregular_postprocess_axis="native",
     )
     selected_to_native_meta = dict(
         irregular_native_axis=False,
         irregular_gt_axis="selected",
         irregular_proposal_axis="selected",
+        irregular_nms_axis="native",
         irregular_postprocess_axis="native",
         irregular_selected_positions=[0.0, 2.0, 4.0],
         irregular_selected_valid_len=6.0,
     )
 
-    assert model._axis_contract_from_meta(good_meta) == ("native", "native", "native")
+    assert model._axis_contract_from_meta(good_meta) == ("native", "native", "native", "native")
     model._assert_axis_contract(good_meta, stage="test")
-    assert model._axis_contract_from_meta(selected_to_native_meta) == ("selected", "selected", "native")
+    assert model._axis_contract_from_meta(selected_to_native_meta) == (
+        "selected",
+        "selected",
+        "native",
+        "native",
+    )
     model._assert_axis_contract(selected_to_native_meta, stage="test")
     with pytest.raises(ValueError, match="axis contract"):
         model._assert_axis_contract(bad_meta, stage="test")
@@ -1886,6 +1914,7 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
             irregular_native_axis=True,
             irregular_gt_axis="native",
             irregular_proposal_axis="native",
+            irregular_nms_axis="native",
             irregular_postprocess_axis="native",
         ),
         topk=1,
@@ -1894,10 +1923,13 @@ def test_irregular_actionformer_axis_contract_rejects_mismatched_native_route_on
         dict(
             video_name="video_test_0001",
             rank=0,
+            stage="post_nms",
             proposal_axis="native",
+            nms_axis="native",
             postprocess_axis="native",
             label=3,
             score=0.9,
+            segment_coordinate_axis="native",
             segment_axis=[0.0, 4.0],
             segment_seconds=[0.0, 4.0],
         )

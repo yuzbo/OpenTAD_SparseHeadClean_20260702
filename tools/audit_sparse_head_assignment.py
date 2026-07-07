@@ -697,13 +697,20 @@ def make_sample_id(batch_idx, sample_idx, meta):
 def axis_contract(meta):
     default_axis = "native" if meta_value(meta, "irregular_native_axis", False) else "selected"
     contract = meta_value(meta, "irregular_axis_contract", {}) or {}
+    proposal_axis = meta_value(meta, "irregular_proposal_axis", contract.get("proposal_axis", default_axis))
+    nms_axis = meta_value(
+        meta,
+        "irregular_nms_axis",
+        contract.get("nms_axis", contract.get("postprocess_axis", proposal_axis)),
+    )
     return {
         "gt_axis": meta_value(meta, "irregular_gt_axis", contract.get("gt_axis", default_axis)),
-        "proposal_axis": meta_value(meta, "irregular_proposal_axis", contract.get("proposal_axis", default_axis)),
+        "proposal_axis": proposal_axis,
+        "nms_axis": nms_axis,
         "postprocess_axis": meta_value(
             meta,
             "irregular_postprocess_axis",
-            contract.get("postprocess_axis", default_axis),
+            contract.get("postprocess_axis", nms_axis),
         ),
     }
 
@@ -732,6 +739,7 @@ def route_expected_axis_contract(cfg):
     return {
         "gt_axis": cfg_value(expected, "gt_axis", None),
         "proposal_axis": cfg_value(expected, "proposal_axis", None),
+        "nms_axis": cfg_value(expected, "nms_axis", None),
         "postprocess_axis": cfg_value(expected, "postprocess_axis", None),
     }
 
@@ -744,6 +752,7 @@ def loader_axis_contract_from_loadframes(loadframes_step):
     return {
         "gt_axis": gt_axis,
         "proposal_axis": gt_axis,
+        "nms_axis": "native",
         "postprocess_axis": "native",
     }
 
@@ -782,7 +791,12 @@ def axis_contract_key(contract):
     if axis is None:
         axis_key = None
     else:
-        axis_key = (axis.get("gt_axis"), axis.get("proposal_axis"), axis.get("postprocess_axis"))
+        axis_key = (
+            axis.get("gt_axis"),
+            axis.get("proposal_axis"),
+            axis.get("nms_axis"),
+            axis.get("postprocess_axis"),
+        )
     return (contract.get("remap_gt_to_selected_axis"), axis_key)
 
 
@@ -1122,6 +1136,7 @@ def audit_config(config_path, batches, split, device, cfg=None):
                 "sample_fingerprint": fingerprint,
                 "gt_axis": axes["gt_axis"],
                 "proposal_axis": axes["proposal_axis"],
+                "nms_axis": axes["nms_axis"],
                 "postprocess_axis": axes["postprocess_axis"],
                 "num_gt": int(gt_segment.shape[0]),
                 "assignment_mode": assignment_mode,

@@ -25,6 +25,33 @@ Placeholder-commit FAIL review absorbed on 2026-07-06: the external response in 
 
 Fixed-SHA WARN review absorbed on 2026-07-06: the external response in `pro-review-fixed-sha-warn-20260706.md` is recorded verbatim with SHA256 `6C5D5690AD5F21E9D15EE54E26EAA75F0A2A558B2E0985DBFAF321C7FEE9C987`. It reviews the fixed public GitHub commit `2213388febace4cc90a6fb5c8159ea069fd47adf`, so it supersedes the earlier placeholder-URL meta failure. The verdict improves from FAIL to WARN, but the execution boundary remains strict: remote sync is allowed only for diagnostic Stage 0-2, Linux preflight is allowed, same-batch audit is allowed only as a hard gate, official dense selected-axis sanity is allowed, full training is denied until Stage 0/1/2 all pass, and any `dense-equivalent` claim remains denied.
 
+Fixed-SHA FAIL review absorbed on 2026-07-07: the external response in `pro-review-f541715-fail-20260707.md` is recorded verbatim with SHA256 `50C4190BCF2C93826F928BB4E08AF67EB7A91335ADE4E4C0F30EB008BA08E9AE`. It reviews the public commit `f54171508bd0f558b1b8e2d60d0eb3bb8683cc45` and gives a stricter `FAIL` verdict: do not release a `dense-equivalent` claim, and do not treat current long training as a paper main result. The review correctly reframes `f541715` as a fail-closed / route-contract hardening commit, not as proof that BridgeHead or HeadV2/V3 now match official OpenTAD dense ActionFormer/AdaTAD supervision, decode, or post-processing contracts. Its active execution boundary is: fix or refute the P0 contract issues first, then run diagnostic preflight / same-batch audit / official dense sanity only; no new claim-oriented long training until those gates pass.
+
+Active blockers from the f541715 FAIL review:
+
+- Official dense contract remains unproved against upstream OpenTAD. Bridge / sparse heads must be compared against official `AnchorFreeHead` / `PointGenerator` behavior, including stride-based center sampling, regression range, shortest-GT assignment, linear stride decode, post-processing, and seconds conversion.
+- Runtime does not yet treat `nms_axis` as an independent detector contract. Current `SingleStageDetector` and `IrregularActionFormer` effectively convert proposals to `postprocess_axis` before NMS; if the route contract advertises a separate `nms_axis`, runtime must either implement proposal -> nms -> postprocess conversion or the scanner must require `nms_axis == postprocess_axis`.
+- The review reports a `tools/check_fail_closed_config.py` bridge schema early-return bug. Initial local inspection of the current worktree shows `_scan_route_contract_schema()` is already called in the bridge branch, so this item is not accepted blindly and must be rechecked against the exact public commit before patching. If the public commit differs or a narrower early-return case exists, add a regression test before modifying the scanner.
+- `SingleStageDetector` still lacks `pre_nms_thresh` / `pre_nms_topk` filtering in the single-class branch, unlike `IrregularActionFormer`. This is a confirmed logic inconsistency for one-class and sanity routes, even if it likely does not explain the multi-class THUMOS 40/42 collapse by itself.
+- Current analysis tools cannot yet explain `65 -> 40/42`. Same-batch assignment audit proves target/positive allocation on sampled batches, but not final detector behavior. The next diagnostics must add proposal-level pre-NMS and post-NMS dumps, score calibration, NMS keep/drop reasons, boundary-error decomposition, and a target-decode-IoU -> trained-proposal-IoU chain.
+
+Root-cause ranking absorbed from the f541715 FAIL review:
+
+1. Highest-priority hypothesis: feature geometry and native sparse labels are mismatched. Restoring positives with openrange improves only to the low 40s, so the route may still train native-axis regression targets on features whose local geometry/receptive field is effectively selected-index or dense-grid-like.
+2. Regression range / scale / denominator remains a likely hard failure family. Openrange can restore positives, but that does not prove official stride-equivalent range, radius, target encoding, or decode.
+3. NMS / score calibration may be destroying high-quality proposals. This cannot be accepted or ruled out until pre-NMS and post-NMS proposal quality are compared.
+4. Selected/native/seconds axis conversion is improved but not fully closed, especially around detector runtime and external/debug/eval call sites.
+5. The official dense selected-axis baseline around `Average-mAP ~= 65` remains a gate, not an assumption. Without an upstream or byte-equivalent reproduction, the full collapse cannot be attributed cleanly.
+6. Random sparse versus equal-interval sparse may explain some degradation, but the size of the current gap still points to route/contract failures.
+
+Required next implementation / analysis items from this review:
+
+- Make `nms_axis` a real runtime concept or explicitly fail closed unless it equals `postprocess_axis`.
+- Add SingleStage single-class threshold/top-k filtering parity.
+- Extend proposal diagnostics to emit pre-filter, pre-NMS, post-NMS, and final-seconds proposal records with score, class, axis, level/point index when available, best-GT IoU, boundary errors, and NMS suppression reasons.
+- Build a unified result collector and plotting path for main result tables, mAP waterfall, per-level positives heatmaps, GT coverage buckets, target-decode versus final-proposal IoU, boundary errors, score calibration, and multi-seed variance.
+- Treat openrange / absrange / absrange_expanded as diagnostics until official dense parity, same-batch target equivalence, axis/NMS sanity, and proposal-quality evidence are all available.
+
 New active blockers from the fixed-SHA WARN review:
 
 - `IrregularActionFormerBridgeHead._point_fields()` still exposes the legacy `point_scale = cell_left + cell_right` behavior for 5+ field points. Corrected routes mostly avoid it through explicit range/radius/decode scales, but any fallback to `point_scale` can silently double stride-like scale. The review recommends separating an official-compatible mean scale from an explicitly named `legacy_cell_span`, and allowing full-cell-span semantics only behind an explicit legacy flag.
@@ -545,3 +572,27 @@ Reference snapshot:
   - Runtime evidence that selected-axis dense/bridge controls send native coordinates into NMS is still required.
   - Eleven legacy detector families still have bare `convert_to_seconds(...)` calls. They are not Stage-2/Stage-3 current paths, so they are P2/P3 before reuse, not blockers for the immediate dense-selected/bridge audit route.
   - Remote Linux preflight remains blocked until the cluster login permission issue is resolved.
+
+## Sparse Diagnostic Evidence Chain - 2026-07-07
+
+- The active sparse diagnostic Slurm route is now fail-closed and evidence-producing:
+  - `remote_runs/sbatch_sparse_diag_train_20260707.sh` refuses allocation `1118197`, excludes `g0030`, runs config load / fail-closed scan / `py_compile`, then trains the selected sparse diagnostic config in a separate Slurm job.
+  - The runner now injects detector proposal debug dumps through `--cfg-options`:
+    - pre-filter proposals;
+    - pre-NMS proposals;
+    - post-NMS proposals;
+    - final proposals.
+  - After training, it runs `tools/analyze_detection_quality.py` twice: once for final `result_detection.json` quality, and once for proposal lifecycle analysis from pre/post-NMS JSONL dumps.
+  - It also collects comparison rows with `tools/collect_experiment_results.py` and emits figure specs / best-effort PNGs with `tools/plot_detection_diagnostics.py`.
+- `remote_runs/run_stage4_detection_quality_stage2_dense_20260706.sh` now applies the same reporting closure to the dense Stage-2 controls:
+  - Python selection requires Python >= 3.9 and `mmengine.config.Config`.
+  - It runs detection-quality analysis, Stage-2 gate summary, unified result collection, and figure-spec/plot generation.
+- Generated `analysis/` outputs are now ignored by git so paper/diagnostic products do not pollute the clean code route repository.
+- Important operational caveat:
+  - Sparse jobs submitted before this runner patch will not retroactively contain proposal lifecycle dumps unless they are rerun. Existing Slurm runs can still provide mAP/log/detection-quality outputs, but full pre/post-NMS evidence requires a rerun with the updated runner.
+- Local verification:
+  - `bash -n` passed for the sparse Slurm runner, sparse submitter, and Stage-4 dense quality runner.
+  - `py_compile` passed for the detector, transform, and diagnostic tool changes.
+  - `pytest tests/test_fail_closed_static_gates.py tests/test_paper_diagnostics_tools.py tests/test_audit_sparse_head_assignment_contracts.py -q` passed (`24 passed`).
+  - `pytest tests/test_adapter_native_dense_headv2_contracts.py -q` passed (`65 passed, 25 skipped`).
+  - Active sparse/dense diagnostic configs passed `tools/check_fail_closed_config.py` with no violations.

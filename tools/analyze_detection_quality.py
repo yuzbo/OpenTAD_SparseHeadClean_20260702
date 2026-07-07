@@ -192,6 +192,217 @@ def _best_prediction_for_gt(gt_row, preds, label_aware):
     return best, best_iou
 
 
+def _row_video_id(row):
+    return row.get("video_id", row.get("video_name", ""))
+
+
+def _row_label(row):
+    return row.get("label", row.get("class_id"))
+
+
+def _row_score(row):
+    return float(row.get("score", row.get("score_after_rescore", 0.0)))
+
+
+def _row_segment_seconds(row):
+    if "segment_seconds" in row:
+        return [float(item) for item in row["segment_seconds"]]
+    if "segment" in row:
+        return [float(item) for item in row["segment"]]
+    if "start" in row and "end" in row:
+        return [float(row["start"]), float(row["end"])]
+    raise KeyError(f"proposal row lacks segment_seconds/segment/start+end: {row}")
+
+
+def _proposal_identity(row):
+    segment = tuple(round(float(item), 4) for item in _row_segment_seconds(row))
+    return (_row_video_id(row), str(_row_label(row)), round(_row_score(row), 6), segment)
+
+
+def annotate_proposal_rows(
+    ground_truth,
+    proposal_rows,
+    subset="validation",
+    label_aware=True,
+    tiou_thresholds=(0.3, 0.4, 0.5, 0.6, 0.7),
+):
+    """Attach best-GT IoU and boundary errors to proposal lifecycle rows.
+
+    Proposal rows are intentionally lightweight JSONL-friendly dicts emitted by
+    detector debug dumps. They may use either `video_id` or `video_name`, and
+    either `segment_seconds`, `segment`, or `start`/`end`.
+    """
+
+    gt_data = _load_json(ground_truth)
+    thresholds = tuple(float(t) for t in tiou_thresholds)
+    gt_by_video = defaultdict(list)
+    for row in _iter_ground_truth(gt_data, subset):
+        gt_by_video[row["video_id"]].append(row)
+
+    annotated = []
+    for index, row in enumerate(proposal_rows):
+        video_id = _row_video_id(row)
+        label = _row_label(row)
+        pred_segment = _row_segment_seconds(row)
+        best_gt = None
+        best_iou = 0.0
+        for gt_row in gt_by_video.get(video_id, []):
+            if label_aware and gt_row.get("label") != label:
+                continue
+            iou = segment_iou((gt_row["gt_start"], gt_row["gt_end"]), pred_segment)
+            if best_gt is None or iou > best_iou:
+                best_gt = gt_row
+                best_iou = iou
+
+        out = dict(row)
+        out.setdefault("proposal_index", index)
+        out["video_id"] = video_id
+        out["label"] = label
+        out["score"] = _row_score(row)
+        out["segment_seconds"] = pred_segment
+        out["best_iou"] = best_iou
+        out["best_gt_index"] = None if best_gt is None else int(best_gt["gt_index"])
+        out["best_gt_label"] = None if best_gt is None else best_gt.get("label")
+        if best_gt is None:
+            out["start_error"] = None
+            out["end_error"] = None
+            out["center_error"] = None
+            out["duration_ratio_error"] = None
+        else:
+            pred_start, pred_end = pred_segment
+            gt_start, gt_end = best_gt["gt_start"], best_gt["gt_end"]
+            gt_length = max(gt_end - gt_start, 1e-12)
+            out["start_error"] = pred_start - gt_start
+            out["end_error"] = pred_end - gt_end
+            out["center_error"] = 0.5 * (pred_start + pred_end) - 0.5 * (gt_start + gt_end)
+            out["duration_ratio_error"] = ((pred_end - pred_start) / gt_length) - 1.0
+        for threshold in thresholds:
+            out[f"hit@{_format_threshold(threshold)}"] = best_iou >= threshold
+        annotated.append(out)
+    return annotated
+
+
+def infer_nms_drop_reasons(pre_nms_rows, post_nms_rows, nms_iou_threshold=0.6):
+    """Infer approximate NMS keep/drop reasons from pre/post proposal dumps."""
+
+    kept_identities = {_proposal_identity(row) for row in post_nms_rows}
+    post_by_video_label = defaultdict(list)
+    for row in post_nms_rows:
+        post_by_video_label[(_row_video_id(row), str(_row_label(row)))].append(row)
+
+    rows = []
+    for row in pre_nms_rows:
+        out = dict(row)
+        identity = _proposal_identity(row)
+        kept = identity in kept_identities
+        out["was_kept_by_nms"] = kept
+        out["nms_drop_reason"] = None
+        out["suppressor_score"] = None
+        out["suppressor_iou"] = None
+        out["suppressor_segment_seconds"] = None
+        if not kept:
+            suppressors = []
+            row_segment = _row_segment_seconds(row)
+            for candidate in post_by_video_label.get((_row_video_id(row), str(_row_label(row))), []):
+                candidate_iou = segment_iou(row_segment, _row_segment_seconds(candidate))
+                if candidate_iou >= float(nms_iou_threshold) and _row_score(candidate) >= _row_score(row):
+                    suppressors.append((candidate_iou, _row_score(candidate), candidate))
+            if suppressors:
+                suppressors.sort(key=lambda item: (item[1], item[0]), reverse=True)
+                iou, score, suppressor = suppressors[0]
+                out["nms_drop_reason"] = "suppressed_by_higher_score_overlap"
+                out["suppressor_score"] = score
+                out["suppressor_iou"] = iou
+                out["suppressor_segment_seconds"] = _row_segment_seconds(suppressor)
+            else:
+                out["nms_drop_reason"] = "missing_after_nms_or_voting_or_topk"
+        rows.append(out)
+    return rows
+
+
+def read_jsonl(path):
+    rows = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSONL row at {path}:{line_no}: {exc}") from exc
+    return rows
+
+
+def summarize_proposal_rows(rows, tiou_thresholds=(0.3, 0.4, 0.5, 0.6, 0.7)):
+    thresholds = tuple(float(t) for t in tiou_thresholds)
+    best_ious = [float(row.get("best_iou", 0.0)) for row in rows]
+    summary = {
+        "num_proposals": len(rows),
+        "best_iou_mean": sum(best_ious) / len(best_ious) if best_ious else 0.0,
+        "best_iou_p50": median(best_ious) if best_ious else 0.0,
+        "best_iou_p90": _percentile(best_ious, 0.9),
+    }
+    for threshold in thresholds:
+        key = _format_threshold(threshold)
+        summary[f"proposal_hit_rate@{key}"] = (
+            sum(1 for row in rows if float(row.get("best_iou", 0.0)) >= threshold) / len(rows) if rows else 0.0
+        )
+    if rows and "was_kept_by_nms" in rows[0]:
+        dropped_good = {
+            _format_threshold(threshold): sum(
+                1
+                for row in rows
+                if not bool(row.get("was_kept_by_nms")) and float(row.get("best_iou", 0.0)) >= threshold
+            )
+            for threshold in thresholds
+        }
+        summary["nms_dropped_good_proposals"] = dropped_good
+    return summary
+
+
+def write_proposal_lifecycle_outputs(
+    ground_truth,
+    pre_nms_jsonl,
+    post_nms_jsonl,
+    output_prefix,
+    subset="validation",
+    label_aware=True,
+    tiou_thresholds=(0.3, 0.4, 0.5, 0.6, 0.7),
+    nms_iou_threshold=0.6,
+):
+    pre_rows = annotate_proposal_rows(
+        ground_truth,
+        read_jsonl(pre_nms_jsonl),
+        subset=subset,
+        label_aware=label_aware,
+        tiou_thresholds=tiou_thresholds,
+    )
+    post_rows = annotate_proposal_rows(
+        ground_truth,
+        read_jsonl(post_nms_jsonl),
+        subset=subset,
+        label_aware=label_aware,
+        tiou_thresholds=tiou_thresholds,
+    )
+    nms_rows = infer_nms_drop_reasons(pre_rows, post_rows, nms_iou_threshold=nms_iou_threshold)
+    summary = {
+        "pre_nms": summarize_proposal_rows(pre_rows, tiou_thresholds=tiou_thresholds),
+        "post_nms": summarize_proposal_rows(post_rows, tiou_thresholds=tiou_thresholds),
+        "nms": summarize_proposal_rows(nms_rows, tiou_thresholds=tiou_thresholds),
+    }
+
+    output_prefix = Path(output_prefix)
+    output_prefix.parent.mkdir(parents=True, exist_ok=True)
+    write_rows_csv(pre_rows, f"{output_prefix}_pre_nms.csv")
+    write_rows_csv(post_rows, f"{output_prefix}_post_nms.csv")
+    write_rows_csv(nms_rows, f"{output_prefix}_nms.csv")
+    summary_path = Path(f"{output_prefix}_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        json.dump(summary, handle, indent=2, sort_keys=True)
+    return summary
+
+
 def summarize_detection_quality(
     ground_truth,
     prediction,
@@ -312,6 +523,14 @@ def parse_args():
     parser.add_argument("--tiou-thresholds", default="0.3,0.4,0.5,0.6,0.7")
     parser.add_argument("--topk-per-video", type=int, default=None)
     parser.add_argument("--label-aware", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--pre-nms-jsonl", default=None, help="Detector proposal debug dump before NMS")
+    parser.add_argument("--post-nms-jsonl", default=None, help="Detector proposal debug dump after NMS")
+    parser.add_argument(
+        "--proposal-output-prefix",
+        default=None,
+        help="Prefix for proposal lifecycle outputs: *_pre_nms.csv, *_post_nms.csv, *_nms.csv, *_summary.json",
+    )
+    parser.add_argument("--nms-iou-threshold", type=float, default=0.6)
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--output-csv", default=None)
     return parser.parse_args()
@@ -332,6 +551,28 @@ def main():
         prediction = resolve_prediction_path(args.experiment_dir)
     if ground_truth is None:
         raise SystemExit("Missing --ground-truth or --config")
+
+    has_proposal_lifecycle = args.pre_nms_jsonl is not None or args.post_nms_jsonl is not None
+    if has_proposal_lifecycle:
+        if args.pre_nms_jsonl is None or args.post_nms_jsonl is None:
+            raise SystemExit("Both --pre-nms-jsonl and --post-nms-jsonl are required for proposal lifecycle analysis")
+        if args.proposal_output_prefix is None:
+            raise SystemExit("Missing --proposal-output-prefix for proposal lifecycle analysis")
+        thresholds = tuple(float(item) for item in args.tiou_thresholds.split(",") if item)
+        summary = write_proposal_lifecycle_outputs(
+            ground_truth,
+            args.pre_nms_jsonl,
+            args.post_nms_jsonl,
+            args.proposal_output_prefix,
+            subset=args.subset,
+            label_aware=args.label_aware,
+            tiou_thresholds=thresholds,
+            nms_iou_threshold=args.nms_iou_threshold,
+        )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        if prediction is None and args.experiment_dir is None:
+            return
+
     if prediction is None:
         raise SystemExit("Missing --prediction or --experiment-dir")
 

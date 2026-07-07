@@ -9,6 +9,7 @@ REQUIRE_RESULTS="${REQUIRE_RESULTS:-0}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 FAIL_CLOSED_JSON="$LOG_DIR/${RUN_TAG}_fail_closed_config.json"
 GATE_JSON="$LOG_DIR/${RUN_TAG}_stage2_dense_gate.json"
+ANALYSIS_DIR="$ROOT/analysis/stage2_dense_20260706"
 
 RANDOM_CFG="configs/adatad/thumos/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py"
 UNIFORM_CFG="configs/adatad/thumos/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py"
@@ -21,7 +22,13 @@ TARGETS=(
 )
 
 log_msg() { echo "$(date '+%F %T') [stage4-quality] $*"; }
-python_works() { "$1" -c "import sys" >/dev/null 2>&1; }
+python_works() {
+  "$1" - <<'PY' >/dev/null 2>&1
+import sys
+from mmengine.config import Config
+assert sys.version_info >= (3, 9), sys.version
+PY
+}
 
 select_python() {
   if [[ -n "$PYTHON_BIN" ]]; then
@@ -39,7 +46,7 @@ select_python() {
 }
 
 cd "$ROOT"
-mkdir -p "$LOG_DIR"
+mkdir -p "$LOG_DIR" "$ANALYSIS_DIR"
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 export THUMOS_ROOT="${THUMOS_ROOT:-$BASE/thumos14}"
 select_python
@@ -50,7 +57,7 @@ log_msg "fail-closed config scan"
 log_msg "fail_closed_config_json=$FAIL_CLOSED_JSON"
 
 log_msg "py_compile preflight"
-"$PYTHON_BIN" -m py_compile tools/analyze_detection_quality.py tools/check_fail_closed_config.py tools/summarize_stage2_dense_gate.py
+"$PYTHON_BIN" -m py_compile tools/analyze_detection_quality.py tools/check_fail_closed_config.py tools/summarize_stage2_dense_gate.py tools/collect_experiment_results.py tools/plot_detection_diagnostics.py
 
 missing=0
 analyzed=0
@@ -80,6 +87,25 @@ done
 log_msg "summary analyzed=$analyzed missing=$missing"
 "$PYTHON_BIN" tools/summarize_stage2_dense_gate.py --root "$ROOT" --json-out "$GATE_JSON" --brief
 log_msg "gate_json=$GATE_JSON"
+
+SUMMARY_PREFIX="$ANALYSIS_DIR/${RUN_TAG}"
+"$PYTHON_BIN" tools/collect_experiment_results.py \
+  "near63_random_short=$ROOT/exps/thumos/adatad/input_random_fixed_50pct_adapter_densehead_selected_axis_control_shortgate_n16r4/gpu1_id1" \
+  "near65_uniform_short=$ROOT/exps/thumos/adatad/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_shortgate_n16r4/gpu1_id1" \
+  "near63_random_long=$ROOT/exps/thumos/adatad/input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4/gpu1_id0" \
+  "near65_uniform_long=$ROOT/exps/thumos/adatad/input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4/gpu1_id0" \
+  --json-out "${SUMMARY_PREFIX}_results.json" \
+  --csv-out "${SUMMARY_PREFIX}_results.csv" \
+  --md-out "${SUMMARY_PREFIX}_results.md"
+"$PYTHON_BIN" tools/plot_detection_diagnostics.py \
+  --input "${SUMMARY_PREFIX}_results.csv" \
+  --spec-json "${SUMMARY_PREFIX}_figure_specs.json" \
+  --plot-dir "${SUMMARY_PREFIX}_figures"
+log_msg "summary_json=${SUMMARY_PREFIX}_results.json"
+log_msg "summary_csv=${SUMMARY_PREFIX}_results.csv"
+log_msg "summary_md=${SUMMARY_PREFIX}_results.md"
+log_msg "figure_specs=${SUMMARY_PREFIX}_figure_specs.json"
+log_msg "figure_dir=${SUMMARY_PREFIX}_figures"
 if [[ "$REQUIRE_RESULTS" == "1" && "$analyzed" -eq 0 ]]; then
   echo "No Stage-2 dense result_detection.json files found." >&2
   exit 2

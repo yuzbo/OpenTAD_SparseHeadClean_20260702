@@ -71,17 +71,39 @@ def test_single_stage_postprocessing_uses_explicit_axis_for_seconds_conversion()
     assert "convert_to_seconds(segments, metas[i])" not in detector
     assert "source_axis=seconds_source_axis" in detector
     assert 'proposal_axis = meta.get("irregular_proposal_axis"' in detector
+    assert "nms_axis = meta.get(" in detector
+    assert '"irregular_nms_axis"' in detector
     assert 'postprocess_axis = meta.get("irregular_postprocess_axis"' in detector
     assert 'expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"' in detector
     assert "proposal_axis != expected_axis" in detector
-    assert "proposal_axis == \"selected\" and postprocess_axis == \"native\"" in detector
+    assert "proposal_axis == \"selected\" and nms_axis == \"native\"" in detector
+    assert "segments = self._segments_to_axis(segments, meta, proposal_axis, nms_axis)" in detector
+    assert "segments = self._segments_to_axis(segments, meta, nms_axis, postprocess_axis)" in detector
 
 
 def test_single_stage_single_class_labels_are_long_and_partial_axis_meta_is_contract():
     detector = (ROOT / "opentad/models/detectors/single_stage.py").read_text(encoding="utf-8")
 
     assert '"irregular_native_axis"' in detector
+    assert "keep_idxs = scores > pre_nms_thresh" in detector
+    assert "num_topk = min(pre_nms_topk, scores.size(0))" in detector
     assert 'labels = torch.zeros(scores.shape[0], dtype=torch.long).contiguous()' in detector
+
+
+def test_irregular_actionformer_runtime_reads_nms_axis_and_multistage_debug_dumps():
+    detector = (ROOT / "opentad/models/detectors/irregular_actionformer.py").read_text(encoding="utf-8")
+
+    assert "nms_axis = meta.get(" in detector
+    assert '"irregular_nms_axis"' in detector
+    assert "return gt_axis, proposal_axis, nms_axis, postprocess_axis" in detector
+    assert "segments = self._segments_to_axis(segments, metas[i], proposal_axis, nms_axis)" in detector
+    assert "segments = self._segments_to_axis(segments, metas[i], nms_axis, postprocess_axis)" in detector
+    assert "debug_dump_pre_filter_path" in detector
+    assert "debug_dump_pre_nms_path" in detector
+    assert "debug_dump_post_nms_path" in detector
+    assert "debug_dump_final_path" in detector
+    assert 'stage="pre_nms"' in detector
+    assert 'stage="post_nms"' in detector
 
 
 def test_remote_run_execution_scripts_gate_fail_closed_config_before_commands():
@@ -287,7 +309,11 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
 
     assert "tools/check_fail_closed_config.py" in runner
     assert "tools/analyze_detection_quality.py" in runner
+    assert "tools/collect_experiment_results.py" in runner
+    assert "tools/plot_detection_diagnostics.py" in runner
     assert "tools/summarize_stage2_dense_gate.py" in runner
+    assert "sys.version_info >= (3, 9)" in runner
+    assert "from mmengine.config import Config" in runner
     assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_n16r4.py" in runner
     assert "input_uniform_fixed_50pct_official_dense_selected_axis_sanity_n16r4.py" in runner
     assert "input_random_fixed_50pct_adapter_densehead_selected_axis_control_shortgate_n16r4" in runner
@@ -296,11 +322,54 @@ def test_stage4_detection_quality_runner_is_cpu_only_and_stage2_scoped():
     assert "detection_quality_summary_" in runner
     assert "detection_quality_rows_" in runner
     assert "stage2_dense_gate.json" in runner
+    assert "_results.json" in runner
+    assert "_results.csv" in runner
+    assert "_results.md" in runner
+    assert "_figure_specs.json" in runner
+    assert "_figures" in runner
     assert "--brief" in runner
     assert "torchrun" not in runner
     assert "tools/train.py" not in runner
     assert "srun --jobid=1118197" not in runner
     assert "CUDA_VISIBLE_DEVICES" not in runner
+
+
+def test_generated_analysis_outputs_are_gitignored():
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "analysis/" in gitignore
+
+
+def test_sparse_diag_slurm_runner_dumps_and_analyzes_proposal_lifecycle():
+    runner = (ROOT / "remote_runs/sbatch_sparse_diag_train_20260707.sh").read_text(
+        encoding="utf-8"
+    )
+    submitter = (ROOT / "remote_runs/submit_sparse_diag_slurm_20260707.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --exclude=g0030" in runner
+    assert '[[ "${SLURM_JOB_ID:-}" == "1118197" ]]' in runner
+    assert "tools/check_fail_closed_config.py" in runner
+    assert "tools/analyze_detection_quality.py" in runner
+    assert "tools/collect_experiment_results.py" in runner
+    assert "tools/plot_detection_diagnostics.py" in runner
+    assert "post_processing.debug_dump_pre_filter_path=" in runner
+    assert "post_processing.debug_dump_pre_nms_path=" in runner
+    assert "post_processing.debug_dump_post_nms_path=" in runner
+    assert "post_processing.debug_dump_final_path=" in runner
+    assert "--pre-nms-jsonl" in runner
+    assert "--post-nms-jsonl" in runner
+    assert "--proposal-output-prefix" in runner
+    assert "proposal_lifecycle_" in runner
+    assert "figure_specs" in runner
+    assert "srun --jobid=1118197" not in runner
+    assert "CUDA_VISIBLE_DEVICES=1" not in runner
+
+    assert "sbatch" in submitter
+    assert '--exclude="${EXCLUDE_NODE:-g0030}"' in submitter
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_selected_axis_control_n16r4.py" in submitter
+    assert "input_uniform_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_n16r4.py" in submitter
+    assert "input_random_fixed_50pct_adapter_irregular_bridge_hard_linear_absrange_expanded_shortgate_n16r4.py" in submitter
 
 
 def test_train_and_test_entrypoints_run_fail_closed_scan_after_cfg_options():

@@ -55,11 +55,15 @@ class IrregularActionFormer(BaseDetector):
         contract = meta.get("irregular_axis_contract", {}) or {}
         gt_axis = meta.get("irregular_gt_axis", contract.get("gt_axis", default_axis))
         proposal_axis = meta.get("irregular_proposal_axis", contract.get("proposal_axis", default_axis))
+        nms_axis = meta.get(
+            "irregular_nms_axis",
+            contract.get("nms_axis", contract.get("postprocess_axis", proposal_axis)),
+        )
         postprocess_axis = meta.get(
             "irregular_postprocess_axis",
-            contract.get("postprocess_axis", proposal_axis),
+            contract.get("postprocess_axis", nms_axis),
         )
-        return gt_axis, proposal_axis, postprocess_axis
+        return gt_axis, proposal_axis, nms_axis, postprocess_axis
 
     def _has_selected_axis_meta(self, meta):
         return meta.get("irregular_selected_positions", None) is not None and meta.get(
@@ -74,8 +78,8 @@ class IrregularActionFormer(BaseDetector):
             )
 
     def _assert_axis_contract(self, meta, stage="runtime"):
-        gt_axis, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
-        axes = (gt_axis, proposal_axis, postprocess_axis)
+        gt_axis, proposal_axis, nms_axis, postprocess_axis = self._axis_contract_from_meta(meta)
+        axes = (gt_axis, proposal_axis, nms_axis, postprocess_axis)
         allowed = {"native", "selected"}
         if any(axis not in allowed for axis in axes):
             raise ValueError(f"IrregularActionFormer axis contract has unsupported axes at {stage}: {axes}")
@@ -83,12 +87,14 @@ class IrregularActionFormer(BaseDetector):
             raise ValueError(
                 "IrregularActionFormer axis contract mismatch at "
                 f"{stage}: gt_axis={gt_axis}, proposal_axis={proposal_axis}, "
-                f"postprocess_axis={postprocess_axis}"
+                f"nms_axis={nms_axis}, postprocess_axis={postprocess_axis}"
             )
-        if postprocess_axis != proposal_axis and not (proposal_axis == "selected" and postprocess_axis == "native"):
+        proposal_to_nms = proposal_axis == nms_axis or (proposal_axis == "selected" and nms_axis == "native")
+        nms_to_postprocess = nms_axis == postprocess_axis or (nms_axis == "selected" and postprocess_axis == "native")
+        if not proposal_to_nms or not nms_to_postprocess:
             raise ValueError(
                 "IrregularActionFormer axis contract mismatch at "
-                f"{stage}: proposal_axis={proposal_axis}, postprocess_axis={postprocess_axis}"
+                f"{stage}: proposal_axis={proposal_axis}, nms_axis={nms_axis}, postprocess_axis={postprocess_axis}"
             )
         expected_axis = "native" if meta.get("irregular_native_axis", False) else "selected"
         if gt_axis != expected_axis or proposal_axis != expected_axis:
@@ -101,7 +107,7 @@ class IrregularActionFormer(BaseDetector):
         allow_selected_postprocess = bool(
             meta.get("allow_selected_axis_postprocess_nms", contract.get("allow_selected_axis_postprocess_nms", False))
         )
-        if postprocess_axis == "selected" and not allow_selected_postprocess:
+        if (nms_axis == "selected" or postprocess_axis == "selected") and not allow_selected_postprocess:
             raise ValueError(
                 "IrregularActionFormer refuses selected-axis post-processing/NMS without "
                 f"allow_selected_axis_postprocess_nms=True at {stage}."
@@ -128,7 +134,29 @@ class IrregularActionFormer(BaseDetector):
             self._require_selected_axis_meta(meta, "seconds_conversion")
         return convert_to_seconds(segments, meta, source_axis=source_axis, strict=True)
 
-    def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None):
+    def _debug_dump_paths(self, post_cfg):
+        paths = {
+            "pre_filter": self._cfg_get(post_cfg, "debug_dump_pre_filter_path", None),
+            "pre_nms": self._cfg_get(post_cfg, "debug_dump_pre_nms_path", None),
+            "post_nms": self._cfg_get(post_cfg, "debug_dump_post_nms_path", None),
+            "final": self._cfg_get(post_cfg, "debug_dump_final_path", None),
+        }
+        if bool(self._cfg_get(post_cfg, "debug_dump_proposals", False)):
+            legacy_path = self._cfg_get(post_cfg, "debug_dump_path", None)
+            if legacy_path and not any(paths.values()):
+                paths["post_nms"] = legacy_path
+        return paths
+
+    def _flatten_proposals_for_debug(self, segments, scores, num_classes):
+        if num_classes == 1:
+            return segments, scores.squeeze(-1), torch.zeros(scores.shape[0], dtype=torch.long)
+        pred_prob = scores.flatten()
+        topk_idxs = torch.arange(pred_prob.numel(), dtype=torch.long)
+        pt_idxs = torch.div(topk_idxs, num_classes, rounding_mode="floor")
+        cls_idxs = torch.fmod(topk_idxs, num_classes)
+        return segments[pt_idxs], pred_prob, cls_idxs
+
+    def _proposal_axis_debug_records(self, segments, scores, labels, meta, topk=100, segment_axis=None, stage="post_nms"):
         self._assert_axis_contract(meta, stage="proposal_debug")
         if segments.numel() == 0:
             return []
@@ -140,7 +168,7 @@ class IrregularActionFormer(BaseDetector):
         picked_segments = segments[order].detach().cpu()
         picked_scores = scores[order].detach().cpu()
         picked_labels = labels[order].detach().cpu()
-        _, proposal_axis, postprocess_axis = self._axis_contract_from_meta(meta)
+        _, proposal_axis, nms_axis, postprocess_axis = self._axis_contract_from_meta(meta)
         segment_axis = segment_axis or proposal_axis
         seconds = self._segments_to_seconds(picked_segments.clone(), meta, segment_axis)
 
@@ -151,13 +179,45 @@ class IrregularActionFormer(BaseDetector):
             records.append(
                 dict(
                     video_name=meta.get("video_name", ""),
+                    stage=stage,
                     rank=rank,
                     proposal_axis=proposal_axis,
+                    nms_axis=nms_axis,
                     postprocess_axis=postprocess_axis,
+                    segment_coordinate_axis=segment_axis,
                     label=int(label.item()),
                     score=round(float(score.item()), 6),
                     segment_axis=[round(float(item), 6) for item in segment_coords.tolist()],
                     segment_seconds=[round(float(item), 6) for item in segment_seconds.tolist()],
+                )
+            )
+        return records
+
+    def _final_seconds_debug_records(self, segments, scores, labels, meta, topk=100):
+        if segments.numel() == 0:
+            return []
+        scores = scores.reshape(-1)
+        labels = labels.reshape(-1) if torch.is_tensor(labels) else torch.as_tensor(labels)
+        topk = min(int(topk), int(scores.numel()))
+        order = torch.argsort(scores, descending=True)[:topk]
+        records = []
+        for rank, index in enumerate(order):
+            segment = segments[index].detach().cpu()
+            score = scores[index].detach().cpu()
+            label = labels[index].detach().cpu()
+            records.append(
+                dict(
+                    video_name=meta.get("video_name", ""),
+                    stage="final",
+                    rank=rank,
+                    proposal_axis="seconds",
+                    nms_axis="seconds",
+                    postprocess_axis="seconds",
+                    segment_coordinate_axis="seconds",
+                    label=int(label.item()) if torch.is_tensor(label) else int(label),
+                    score=round(float(score.item()), 6),
+                    segment_axis=[round(float(item), 6) for item in segment.tolist()],
+                    segment_seconds=[round(float(item), 6) for item in segment.tolist()],
                 )
             )
         return records
@@ -393,17 +453,28 @@ class IrregularActionFormer(BaseDetector):
         rpn_proposals, rpn_scores = predictions
         pre_nms_thresh = getattr(post_cfg, "pre_nms_thresh", 0.001)
         pre_nms_topk = getattr(post_cfg, "pre_nms_topk", 2000)
-        debug_dump_proposals = bool(self._cfg_get(post_cfg, "debug_dump_proposals", False))
-        debug_dump_path = self._cfg_get(post_cfg, "debug_dump_path", None)
+        debug_dump_paths = self._debug_dump_paths(post_cfg)
         debug_dump_topk = int(self._cfg_get(post_cfg, "debug_dump_topk", 100))
         num_classes = rpn_scores[0].shape[-1]
 
         results = {}
         for i in range(len(metas)):
             self._assert_axis_contract(metas[i], stage="post_processing")
-            _, proposal_axis, postprocess_axis = self._axis_contract_from_meta(metas[i])
+            _, proposal_axis, nms_axis, postprocess_axis = self._axis_contract_from_meta(metas[i])
             segments = rpn_proposals[i].detach().cpu()
             scores = rpn_scores[i].detach().cpu()
+            if debug_dump_paths["pre_filter"]:
+                debug_segments, debug_scores, debug_labels = self._flatten_proposals_for_debug(segments, scores, num_classes)
+                debug_records = self._proposal_axis_debug_records(
+                    debug_segments,
+                    debug_scores,
+                    debug_labels,
+                    metas[i],
+                    topk=debug_dump_topk,
+                    segment_axis=proposal_axis,
+                    stage="pre_filter",
+                )
+                self._write_proposal_axis_debug_records(debug_dump_paths["pre_filter"], debug_records)
 
             if num_classes == 1:
                 scores = scores.squeeze(-1)
@@ -433,22 +504,40 @@ class IrregularActionFormer(BaseDetector):
                 scores = pred_prob
                 labels = cls_idxs
 
-            segments = self._segments_to_axis(segments, metas[i], proposal_axis, postprocess_axis)
-            if post_cfg.sliding_window is False and post_cfg.nms is not None:
-                segments, scores, labels = batched_nms(segments, scores, labels, **post_cfg.nms)
-
-            video_id = metas[i]["video_name"]
-            if debug_dump_proposals:
+            segments = self._segments_to_axis(segments, metas[i], proposal_axis, nms_axis)
+            if debug_dump_paths["pre_nms"]:
                 debug_records = self._proposal_axis_debug_records(
                     segments,
                     scores,
                     labels,
                     metas[i],
                     topk=debug_dump_topk,
-                    segment_axis=postprocess_axis,
+                    segment_axis=nms_axis,
+                    stage="pre_nms",
                 )
-                self._write_proposal_axis_debug_records(debug_dump_path, debug_records)
+                self._write_proposal_axis_debug_records(debug_dump_paths["pre_nms"], debug_records)
+            if post_cfg.sliding_window is False and post_cfg.nms is not None:
+                segments, scores, labels = batched_nms(segments, scores, labels, **post_cfg.nms)
+
+            video_id = metas[i]["video_name"]
+            if debug_dump_paths["post_nms"]:
+                debug_records = self._proposal_axis_debug_records(
+                    segments,
+                    scores,
+                    labels,
+                    metas[i],
+                    topk=debug_dump_topk,
+                    segment_axis=nms_axis,
+                    stage="post_nms",
+                )
+                self._write_proposal_axis_debug_records(debug_dump_paths["post_nms"], debug_records)
+            segments = self._segments_to_axis(segments, metas[i], nms_axis, postprocess_axis)
             segments = self._segments_to_seconds(segments, metas[i], postprocess_axis)
+            if debug_dump_paths["final"]:
+                self._write_proposal_axis_debug_records(
+                    debug_dump_paths["final"],
+                    self._final_seconds_debug_records(segments, scores, labels, metas[i], topk=debug_dump_topk),
+                )
 
             if isinstance(ext_cls, list):
                 labels = [ext_cls[label.item()] for label in labels]

@@ -776,13 +776,16 @@ class LoadFrames:
         results["irregular_native_axis"] = bool(not self.remap_gt_to_selected_axis)
         gt_axis = "selected" if self.remap_gt_to_selected_axis else "native"
         proposal_axis = gt_axis
+        nms_axis = "native"
         postprocess_axis = "native"
         results["irregular_gt_axis"] = gt_axis
         results["irregular_proposal_axis"] = proposal_axis
+        results["irregular_nms_axis"] = nms_axis
         results["irregular_postprocess_axis"] = postprocess_axis
         results["irregular_axis_contract"] = dict(
             gt_axis=gt_axis,
             proposal_axis=proposal_axis,
+            nms_axis=nms_axis,
             postprocess_axis=postprocess_axis,
         )
 

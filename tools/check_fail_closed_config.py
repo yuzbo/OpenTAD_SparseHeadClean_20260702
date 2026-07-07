@@ -354,6 +354,14 @@ def scan_route_contract_object(obj, path):
         return violations
 
     if not contract:
+        violations.append(
+            _violation(
+                path,
+                "route_contract",
+                contract,
+                "bridge route must explicitly declare route_contract metadata",
+            )
+        )
         return violations
     violations.extend(_scan_route_contract_schema(contract, f"{path}.route_contract"))
 
