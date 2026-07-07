@@ -263,6 +263,8 @@ class LoadFrames:
         sampling_background_weight=1.0,
         remap_gt_to_selected_axis=True,
         allow_drop_selected_axis_gt=False,
+        legacy_selected_axis_gt_drop_diagnostic=False,
+        diagnostic_only=False,
         store_dense_window=False,
         pseudo_boundary_cache_dir=None,
         pseudo_boundary_quota=64,
@@ -307,6 +309,8 @@ class LoadFrames:
         self.sampling_background_weight = sampling_background_weight
         self.remap_gt_to_selected_axis = remap_gt_to_selected_axis
         self.allow_drop_selected_axis_gt = bool(allow_drop_selected_axis_gt)
+        self.legacy_selected_axis_gt_drop_diagnostic = bool(legacy_selected_axis_gt_drop_diagnostic)
+        self.diagnostic_only = bool(diagnostic_only)
         self.store_dense_window = store_dense_window
         self.pseudo_boundary_cache_dir = pseudo_boundary_cache_dir
         self.pseudo_boundary_quota = pseudo_boundary_quota

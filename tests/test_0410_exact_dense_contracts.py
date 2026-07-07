@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 from mmengine.config import Config
@@ -55,6 +56,17 @@ def test_0410_exact_random_fixed_dense_config_is_pure_actionformer():
     for split, step in steps.items():
         assert bool(step.allow_drop_selected_axis_gt), split
         assert bool(step.legacy_selected_axis_gt_drop_diagnostic), split
+
+
+def test_loadframes_signature_accepts_legacy_gt_drop_diagnostic_marker():
+    module = ast.parse((ROOT / "opentad/datasets/transforms/end_to_end.py").read_text(encoding="utf-8"))
+    load_frames_cls = next(node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "LoadFrames")
+    init_fn = next(node for node in load_frames_cls.body if isinstance(node, ast.FunctionDef) and node.name == "__init__")
+    arg_names = {arg.arg for arg in init_fn.args.args}
+
+    assert "allow_drop_selected_axis_gt" in arg_names
+    assert "legacy_selected_axis_gt_drop_diagnostic" in arg_names
+    assert "diagnostic_only" in arg_names
 
 
 def test_0410_exact_stride2_uniform_dense_config_is_not_selected_axis_subsample():
