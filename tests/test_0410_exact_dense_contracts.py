@@ -52,6 +52,9 @@ def test_0410_exact_random_fixed_dense_config_is_pure_actionformer():
     assert steps["test"].method_base == "sliding_window"
     assert int(steps["test"].target_len) == 384
     assert bool(steps["test"].remap_gt_to_selected_axis)
+    for split, step in steps.items():
+        assert bool(step.allow_drop_selected_axis_gt), split
+        assert bool(step.legacy_selected_axis_gt_drop_diagnostic), split
 
 
 def test_0410_exact_stride2_uniform_dense_config_is_not_selected_axis_subsample():
