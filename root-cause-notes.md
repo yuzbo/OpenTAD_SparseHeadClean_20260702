@@ -619,3 +619,25 @@ Reference snapshot:
   - `input_random_fixed_50pct_adapter_actionformer_selected_axis_bs8_n16r4.py`: current adapter random-fixed selected-axis protocol, but pure `ActionFormer + Conv1DTransformerProj + FPNIdentity + ActionFormerHead`. This tests whether the current adapter/training/data protocol is already low before the irregular wrapper.
   - `input_uniform_fixed_50pct_adapter_actionformer_selected_axis_bs8_n16r4.py`: current adapter uniform-fixed selected-axis protocol, pure ActionFormer, to compare against the low current-route near65 sanity job.
 - Added `remote_runs/sbatch_protocol_bridge_train_20260708.sh` and `remote_runs/submit_protocol_bridge_slurm_20260708.sh`. These jobs are diagnostic isolation runs, not dense-equivalent claims; they run as separate Slurm jobs and refuse allocation `1118197` / node `g0030`.
+
+## Adapter Baseline Reproduction - 2026-07-08
+
+- Re-verified the historical random-fixed adapter baseline from the old N16R4 run:
+  - historical config: `configs/adatad/thumos/input_random_fixed_50pct_adapter_n16r4_retrain_20260604.py`;
+  - strict contract in log: `random_fixed_subsample_384_of_768_keep_ratio_0.5`;
+  - model contract: pure `ActionFormer + Conv1DTransformerProj + FPNIdentity + ActionFormerHead`;
+  - backbone contract: `VisionTransformerAdapter`, `freeze_backbone=False`, `norm_eval=False`, adapter layers trainable;
+  - solver/postprocess contract: train/val/test batch size `2`, soft-NMS `sigma=0.7`;
+  - final historical result: `Average-mAP=63.77`.
+- Added the same-named reproduction config in this clean repo:
+  - `configs/adatad/thumos/input_random_fixed_50pct_adapter_n16r4_retrain_20260604.py`.
+  - It intentionally only overrides N16R4 THUMOS paths and `workflow.disable_checkpoint=False`; the adapter model, dense head, sampling, losses, and post-processing are inherited from `input_random_fixed_50pct_adapter.py`.
+  - It does **not** set `remap_gt_to_selected_axis` or selected-axis drop diagnostics. This distinguishes it from the 0410 frozen exact dense reproduction and from selected-axis route sanity jobs.
+- Added separate Slurm entry points:
+  - `remote_runs/sbatch_adapter_baseline_train_20260708.sh`;
+  - `remote_runs/submit_adapter_baseline_slurm_20260708.sh`.
+  - They refuse allocation `1118197` and node `g0030`, run fail-closed config scan, run a strict adapter-baseline contract preflight, and then train with `torchrun`.
+- Current interpretation plan:
+  - If this adapter baseline recovers near the historical `63.77`, then the low current selected-axis dense/bridge/sparse numbers are not explained by data availability or adapter training in general; the collapse is in the current route changes around selected-axis remap, IrregularActionFormer/DensePassthrough, batch/protocol, proposal axis, NMS/postprocess, or sparse head supervision.
+  - If this adapter baseline also collapses, then the root cause shifts upward to shared environment/data/pretrain/runtime drift or a regression in the inherited dense ActionFormer/adapter code.
+  - Therefore this baseline is now the primary anchor before making stronger claims about why sparse/HeadV3 is low.
